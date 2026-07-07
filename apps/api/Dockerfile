@@ -28,7 +28,12 @@ RUN pnpm --filter @jarvis/config build \
   && pnpm --filter @jarvis/api build
 
 ENV NODE_ENV=production
+# Keep V8 heap bounded so we fit small instances (Render free = 512MB RAM).
+ENV NODE_OPTIONS=--max-old-space-size=460
 EXPOSE 4010
 
-# Apply pending migrations, then boot. (migrate deploy is idempotent.)
-CMD ["sh", "-c", "pnpm --filter @jarvis/api exec prisma migrate deploy && node apps/api/dist/main.js"]
+# Apply pending migrations, then boot. Call prisma/node directly (no pnpm wrapper)
+# so we don't hold two heavy Node processes at once on a memory-constrained box.
+# migrate deploy is idempotent and exits before the server starts.
+WORKDIR /app/apps/api
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/main.js"]
