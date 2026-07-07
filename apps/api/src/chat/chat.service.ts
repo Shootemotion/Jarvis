@@ -1,0 +1,231 @@
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import type { ChatMessage } from '@jarvis/providers';
+import { PrismaService } from '../prisma/prisma.service';
+import { ProviderRegistryService } from '../providers/provider-registry.service';
+import { MemoryService, MemorySearchResult } from '../memory/memory.service';
+import { EntitlementsService } from '../entitlements/entitlements.service';
+import { UsageService } from '../metering/usage.service';
+import { AiSettingsService } from '../ai-settings/ai-settings.service';
+import { FEATURES } from '../entitlements/plans';
+import { ChatDto } from './dto';
+import { JARVIS_SYSTEM_PROMPT } from './system-prompt';
+
+const MAX_HISTORY = 20;
+const MEMORY_TOP_K = 5;
+// Only inject memories whose cosine similarity clears this bar.
+const MEMORY_MIN_SCORE = 0.4;
+
+@Injectable()
+export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly registry: ProviderRegistryService,
+    private readonly memory: MemoryService,
+    private readonly entitlements: EntitlementsService,
+    private readonly usage: UsageService,
+    private readonly aiSettings: AiSettingsService,
+  ) {}
+
+  async chat(userId: string, dto: ChatDto) {
+    // Plan gating + quota: block when the monthly message limit is reached.
+    const ent = await this.entitlements.getForUser(userId);
+    const limit = ent.limits.messagesPerMonth ?? -1;
+    if (limit >= 0) {
+      const { messagesThisMonth } = await this.usage.monthUsage(userId);
+      if (messagesThisMonth >= limit) {
+        throw new ForbiddenException(
+          `Alcanzaste el límite mensual del plan ${ent.planName} (${limit} mensajes). Mejorá a Pro para más.`,
+        );
+      }
+    }
+    const allowPremium = ent.features.includes(FEATURES.PREMIUM_LLM);
+
+    const conversation = await this.resolveConversation(userId, dto);
+
+    // Persist the user's message first.
+    await this.prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        userId,
+        role: 'user',
+        content: dto.message,
+      },
+    });
+
+    // Retrieve relevant long-term memories (best-effort; never blocks chat).
+    const memories = await this.retrieveMemories(
+      userId,
+      dto.message,
+      conversation.projectId ?? undefined,
+    );
+
+    // Build the prompt: system (+ memory context) + recent history.
+    const history = await this.prisma.message.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'asc' },
+      take: MAX_HISTORY,
+    });
+
+    const systemContent =
+      memories.length > 0
+        ? `${JARVIS_SYSTEM_PROMPT}\n\n${this.buildMemoryBlock(memories)}`
+        : JARVIS_SYSTEM_PROMPT;
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemContent },
+      ...history.map((m) => ({
+        role: m.role as ChatMessage['role'],
+        content: m.content,
+      })),
+    ];
+
+    // Provider resolution: BYO key first (any plan), then managed premium for
+    // Pro, else local Ollama. Honors the user's provider preference.
+    const ai = await this.aiSettings.getResolved(userId);
+    const order =
+      ai.preferredProvider === 'auto' ? ['anthropic', 'openai'] : [ai.preferredProvider];
+    let provider = null;
+    let source = 'local';
+    let reqModel: string | undefined;
+    for (const pn of order) {
+      const byoKey = pn === 'anthropic' ? ai.anthropicKey : ai.openaiKey;
+      if (byoKey) {
+        provider = this.registry.buildProvider(pn, byoKey, ai.model);
+        source = 'byo';
+        reqModel = ai.model;
+        break;
+      }
+      if (allowPremium && this.registry.has(pn)) {
+        provider = this.registry.getProvider(pn);
+        source = 'managed';
+        break;
+      }
+    }
+    if (!provider) provider = this.registry.getProvider('ollama');
+    this.logger.log(`chat -> provider=${provider.name} (plan=${ent.plan}, source=${source})`);
+
+    let reply;
+    try {
+      reply = await provider.chat({ messages, model: reqModel });
+    } catch (err) {
+      this.logger.error(`Provider error: ${String(err)}`);
+      throw new ServiceUnavailableException(
+        err instanceof Error ? err.message : 'Fallo del proveedor de IA.',
+      );
+    }
+
+    // Persist the assistant's message with provenance metadata.
+    const saved = await this.prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        userId,
+        role: 'assistant',
+        content: reply.content,
+        metadata: {
+          provider: reply.provider,
+          model: reply.model,
+          usage: reply.usage ?? {},
+          latencyMs: reply.latencyMs,
+          plan: ent.plan,
+        } as unknown as Prisma.InputJsonObject,
+      },
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { updatedAt: new Date() },
+    });
+
+    // Metering: record tokens + estimated cost for this generation.
+    const estimatedCost = await this.usage.log(userId, {
+      provider: reply.provider,
+      model: reply.model,
+      taskType: dto.taskType,
+      inputTokens: reply.usage?.inputTokens,
+      outputTokens: reply.usage?.outputTokens,
+    });
+
+    return {
+      conversationId: conversation.id,
+      messageId: saved.id,
+      reply: { role: 'assistant', content: reply.content },
+      provider: reply.provider,
+      model: reply.model,
+      usage: reply.usage,
+      latencyMs: reply.latencyMs,
+      plan: ent.plan,
+      estimatedCost,
+      memoriesUsed: memories.length,
+    };
+  }
+
+  /** Best-effort semantic recall. Failures (e.g. embedding model missing) are
+   * swallowed so a chat still works without memory. */
+  private async retrieveMemories(
+    userId: string,
+    query: string,
+    projectId?: string,
+  ): Promise<MemorySearchResult[]> {
+    try {
+      const results = await this.memory.search(
+        userId,
+        { query, projectId, limit: MEMORY_TOP_K },
+        true, // automatic-use memories only
+      );
+      return results.filter((m) => m.score >= MEMORY_MIN_SCORE);
+    } catch (err) {
+      this.logger.warn(`Memory recall skipped: ${String(err)}`);
+      return [];
+    }
+  }
+
+  private buildMemoryBlock(memories: MemorySearchResult[]): string {
+    const lines = memories
+      .map((m) => `- [${m.type}] ${m.content}`)
+      .join('\n');
+    return `Memoria relevante del usuario (usala solo si aplica; no inventes):\n${lines}`;
+  }
+
+  private async resolveConversation(userId: string, dto: ChatDto) {
+    if (dto.conversationId) {
+      const existing = await this.prisma.conversation.findFirst({
+        where: { id: dto.conversationId, userId },
+      });
+      if (!existing) throw new NotFoundException('Conversación no encontrada.');
+      return existing;
+    }
+
+    // New conversation: title from the first message (truncated).
+    const title =
+      dto.message.length > 60 ? `${dto.message.slice(0, 57)}…` : dto.message;
+    return this.prisma.conversation.create({
+      data: { userId, projectId: dto.projectId ?? null, title },
+    });
+  }
+
+  listConversations(userId: string, projectId?: string) {
+    return this.prisma.conversation.findMany({
+      where: { userId, ...(projectId ? { projectId } : {}) },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, title: true, projectId: true, updatedAt: true },
+    });
+  }
+
+  async getConversation(userId: string, id: string) {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, userId },
+      include: { messages: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!conversation) throw new NotFoundException('Conversación no encontrada.');
+    return conversation;
+  }
+}

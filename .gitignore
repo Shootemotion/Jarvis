@@ -1,0 +1,32 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+.next/
+out/
+build/
+
+# turbo
+.turbo/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+
+# prisma
+apps/api/prisma/*.db
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

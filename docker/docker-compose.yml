@@ -1,0 +1,41 @@
+# JARVIS local infrastructure.
+# Ollama runs natively on Windows (not in Docker) per project decision.
+#
+#   docker compose -f docker/docker-compose.yml up -d
+#
+name: jarvis
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: jarvis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: jarvis
+      POSTGRES_DB: jarvis
+    ports:
+      - "5432:5432"
+    volumes:
+      - jarvis_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    image: n8nio/n8n
+    container_name: jarvis-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: America/Argentina/Buenos_Aires
+    volumes:
+      - jarvis_n8n_data:/home/node/.n8n
+
+volumes:
+  jarvis_postgres_data:
+  jarvis_n8n_data:

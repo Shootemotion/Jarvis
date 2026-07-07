@@ -1,0 +1,62 @@
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #060a0f;
+  --panel: #0e1620;
+  --border: #1b2836;
+  --text: #eaf2fb;
+  --muted: #7f90a3;
+
+  /* Accents (cyan holographic core) */
+  --accent: #38bdf8;
+  --accent-soft: #7dd3fc;
+  --ok: #34d399;
+  --down: #f87171;
+  --warn: #fbbf24;
+
+  /* Fallback font stacks. next/font (layout.tsx) overrides --font-sans/hud/brand
+     on <html> with the real self-hosted families; these apply only if it fails. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-hud: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas,
+    monospace;
+  --font-brand: var(--font-hud);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Selection + scrollbar tuned to the HUD accent. */
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: #fff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 40%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}

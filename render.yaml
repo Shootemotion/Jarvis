@@ -1,0 +1,42 @@
+# Render blueprint for the JARVIS API (Docker).
+# Import this repo in Render → it reads this file. Secrets (sync:false) are
+# entered once in the Render dashboard; non-secret defaults are baked in here.
+services:
+  - type: web
+    name: jarvis-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DEPLOYMENT_MODE
+        value: cloud
+      - key: EMBEDDING_PROVIDER
+        value: openai
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_DIMENSIONS
+        value: "768"
+      - key: JARVIS_USER_EMAIL
+        value: bruno.cleri@diagnos.com.ar
+      # --- Secrets: set these in the Render dashboard ---
+      - key: DATABASE_URL # Supabase → Connection string (pooler, port 6543)
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY # used for chat (premium) AND embeddings
+        sync: false
+      - key: ANTHROPIC_API_KEY # optional (managed Claude for Pro)
+        sync: false
+      - key: JARVIS_ENCRYPTION_KEY # 32-byte hex/base64 for BYO key encryption
+        sync: false
+      - key: MP_ACCESS_TOKEN # Mercado Pago (leave empty for DEV/mock billing)
+        sync: false
+      - key: MP_WEBHOOK_SECRET
+        sync: false
+      - key: PUBLIC_WEB_URL # your Vercel URL, e.g. https://jarvis.vercel.app
+        sync: false
+      - key: CORS_ORIGINS # same Vercel URL (comma-separated if several)
+        sync: false

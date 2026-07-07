@@ -1,0 +1,12 @@
+# Keep the build context small and avoid copying host artifacts into the image.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+.git
+.env
+.env.*
+!.env.example
+**/*.log
+apps/web/public/models
+scratchpad
