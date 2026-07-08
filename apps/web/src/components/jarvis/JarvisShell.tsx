@@ -24,8 +24,10 @@ export function JarvisShell() {
 
   // Interaction mode: voice-first by default; switch to chat for typing.
   const [mode, setMode] = useState<'voice' | 'chat'>('voice');
-  // Webcam head tracking (avatar mirrors the user). Opt-in (permission + heavy).
-  const [camera, setCamera] = useState(false);
+  // Webcam head tracking. off → follow (looks at you, default) → mirror (imitates you).
+  const [cameraMode, setCameraMode] = useState<'off' | 'follow' | 'mirror'>('off');
+  const cycleCamera = () =>
+    setCameraMode((m) => (m === 'off' ? 'follow' : m === 'follow' ? 'mirror' : 'off'));
 
   // Voice: STT (local Whisper) feeds the chat; TTS speaks the reply.
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -113,7 +115,12 @@ export function JarvisShell() {
     <div className={styles.shell} style={accentVar}>
       {/* Living neural field + 3D face (fixed full-viewport background).
           Centered in voice mode; docks aside in chat mode. */}
-      <JarvisAvatar state={state} docked={mode === 'chat'} track={camera} />
+      <JarvisAvatar
+        state={state}
+        docked={mode === 'chat'}
+        track={cameraMode !== 'off'}
+        trackMode={cameraMode === 'mirror' ? 'mirror' : 'follow'}
+      />
 
       <header className={styles.header}>
         <div className={styles.brandWrap}>
@@ -140,99 +147,99 @@ export function JarvisShell() {
               💬 Chat
             </button>
           </div>
-          <span className={styles.sep} />
-          {me && (
-            <span
-              className={`${styles.navLink} ${
-                me.entitlements.plan === 'pro' ? styles.planPro : styles.planFree
-              }`}
-              title={`Plan ${me.entitlements.planName}`}
-            >
-              {me.entitlements.plan === 'pro' ? '★ PRO' : 'FREE'}
-            </span>
-          )}
-          {usage && (
-            <span className={styles.navLink} style={{ cursor: 'default' }} title="Mensajes usados este mes">
-              🗨 {usage.usage.messagesThisMonth}/
-              {usage.limits.messagesPerMonth < 0 ? '∞' : usage.limits.messagesPerMonth}
-            </span>
-          )}
-          {me?.entitlements.plan === 'free' && (
-            <button
-              type="button"
-              className={styles.upgradeBtn}
-              onClick={async () => {
-                try {
-                  const { url } = await api.startCheckout();
-                  window.location.href = url;
-                } catch (err) {
-                  alert(err instanceof Error ? err.message : 'No se pudo iniciar el pago.');
-                }
-              }}
-            >
-              ★ Mejorar a Pro
-            </button>
-          )}
-          <span className={styles.sep} />
-          <Link href="/memory" className={styles.navLink}>
-            🧠 Memoria
-          </Link>
-          <Link href="/settings/ai" className={styles.navLink} title="Ajustes de IA">
+
+          {/* Essentials — shown in both modes */}
+          <button
+            type="button"
+            className={styles.navLink}
+            onClick={cycleCamera}
+            title="Cámara: apagada → Seguir → Reflejo"
+            style={cameraMode !== 'off' ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
+          >
+            {cameraMode === 'off' ? '📷 Cámara' : cameraMode === 'follow' ? '👁 Seguir' : '🪞 Reflejo'}
+          </button>
+          <button
+            type="button"
+            className={styles.navLink}
+            onClick={() => {
+              if (voiceEnabled) voice.stopSpeaking();
+              setVoiceEnabled((v) => !v);
+            }}
+            title="Voz hablada (TTS)"
+            style={voiceEnabled ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
+          >
+            {voiceEnabled ? '🔊' : '🔇'}
+          </button>
+          <Link href="/settings/ai" className={styles.navLink} title="Ajustes">
             ⚙️
           </Link>
-          <Link href="/settings/billing" className={styles.navLink} title="Suscripción">
-            💳
-          </Link>
-          <select
-            className={styles.select}
-            value={projectId ?? ''}
-            onChange={(e) => onProjectChange(e.target.value)}
-            aria-label="Proyecto"
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          {voice.supported && (
+
+          {/* Full controls only in chat mode (keeps voice mode clean) */}
+          {mode === 'chat' && (
             <>
               <span className={styles.sep} />
-              <button
-                type="button"
-                className={styles.navLink}
-                onClick={micToggle}
-                disabled={offline || voice.transcribing}
-                title={voice.listening ? 'Detener y transcribir' : 'Hablar (Whisper local)'}
-                style={
-                  voice.listening
-                    ? { color: '#f87171', borderColor: '#f87171' }
-                    : undefined
-                }
+              {me && (
+                <span
+                  className={`${styles.navLink} ${
+                    me.entitlements.plan === 'pro' ? styles.planPro : styles.planFree
+                  }`}
+                  title={`Plan ${me.entitlements.planName}`}
+                >
+                  {me.entitlements.plan === 'pro' ? '★ PRO' : 'FREE'}
+                </span>
+              )}
+              {usage && (
+                <span className={styles.navLink} style={{ cursor: 'default' }} title="Mensajes usados este mes">
+                  🗨 {usage.usage.messagesThisMonth}/
+                  {usage.limits.messagesPerMonth < 0 ? '∞' : usage.limits.messagesPerMonth}
+                </span>
+              )}
+              {me?.entitlements.plan === 'free' && (
+                <button
+                  type="button"
+                  className={styles.upgradeBtn}
+                  onClick={async () => {
+                    try {
+                      const { url } = await api.startCheckout();
+                      window.location.href = url;
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : 'No se pudo iniciar el pago.');
+                    }
+                  }}
+                >
+                  ★ Mejorar a Pro
+                </button>
+              )}
+              <Link href="/memory" className={styles.navLink}>
+                🧠 Memoria
+              </Link>
+              <Link href="/settings/billing" className={styles.navLink} title="Suscripción">
+                💳
+              </Link>
+              <select
+                className={styles.select}
+                value={projectId ?? ''}
+                onChange={(e) => onProjectChange(e.target.value)}
+                aria-label="Proyecto"
               >
-                {voice.transcribing ? '⏳' : voice.listening ? '⏹ Escuchando' : '🎤'}
-              </button>
-              <button
-                type="button"
-                className={styles.navLink}
-                onClick={() => {
-                  if (voiceEnabled) voice.stopSpeaking();
-                  setVoiceEnabled((v) => !v);
-                }}
-                title="Voz hablada (TTS)"
-                style={voiceEnabled ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
-              >
-                {voiceEnabled ? '🔊' : '🔇'}
-              </button>
-              <button
-                type="button"
-                className={styles.navLink}
-                onClick={() => setCamera((c) => !c)}
-                title="Seguir mi cabeza con la cámara"
-                style={camera ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
-              >
-                {camera ? '📷 ON' : '📷'}
-              </button>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              {voice.supported && (
+                <button
+                  type="button"
+                  className={styles.navLink}
+                  onClick={micToggle}
+                  disabled={offline || voice.transcribing}
+                  title={voice.listening ? 'Detener y transcribir' : 'Dictar'}
+                  style={voice.listening ? { color: '#f87171', borderColor: '#f87171' } : undefined}
+                >
+                  {voice.transcribing ? '⏳' : voice.listening ? '⏹' : '🎤'}
+                </button>
+              )}
               {voice.voices.length > 1 && (
                 <select
                   className={styles.select}
@@ -253,6 +260,7 @@ export function JarvisShell() {
               )}
             </>
           )}
+
           <span className={styles.sep} />
           <JarvisStateIndicator state={state} />
         </div>

@@ -5,6 +5,7 @@ interface Props {
   state: JarvisVisualState;
   docked?: boolean;
   track?: boolean;
+  trackMode?: 'follow' | 'mirror';
 }
 
 /**
@@ -13,6 +14,6 @@ interface Props {
  * voice/idle mode; docks aside when chatting. `track` enables webcam head
  * tracking (MediaPipe FaceLandmarker) so the face mirrors the user.
  */
-export function JarvisAvatar({ state, docked, track }: Props) {
-  return <JarvisFace3D state={state} docked={docked} track={track} />;
+export function JarvisAvatar({ state, docked, track, trackMode }: Props) {
+  return <JarvisFace3D state={state} docked={docked} track={track} trackMode={trackMode} />;
 }

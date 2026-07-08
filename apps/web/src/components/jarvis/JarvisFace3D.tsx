@@ -16,6 +16,11 @@ interface Props {
   docked?: boolean;
   /** When true, the webcam (MediaPipe FaceLandmarker) drives head pose + face. */
   track?: boolean;
+  /**
+   * 'follow' = the head turns toward where you are (looks at you); 'mirror' =
+   * the head imitates your pose + blink + mouth. Default 'follow'.
+   */
+  trackMode?: 'follow' | 'mirror';
 }
 
 const BG_COLOR = 0x04060a;
@@ -28,6 +33,7 @@ const MP_MODEL =
 /** Live tracking values written by MediaPipe, read by the render loop. */
 interface LiveFace {
   active: boolean;
+  mode: 'follow' | 'mirror';
   yaw: number;
   pitch: number;
   roll: number;
@@ -89,15 +95,18 @@ function morphIndex(dict: Record<string, number>, ...cands: string[]): number {
  * a holographic wireframe with bloom. Real blinking + mouth movement via morph
  * targets. Same ARKit blendshapes a webcam FaceLandmarker outputs (Phase B).
  */
-export function JarvisFace3D({ state, docked = false, track = false }: Props) {
+export function JarvisFace3D({ state, docked = false, track = false, trackMode = 'follow' }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const dockedRef = useRef(docked);
   dockedRef.current = docked;
+  const trackModeRef = useRef(trackMode);
+  trackModeRef.current = trackMode;
   const liveRef = useRef<LiveFace>({
     active: false,
+    mode: 'follow',
     yaw: 0,
     pitch: 0,
     roll: 0,
@@ -355,11 +364,12 @@ export function JarvisFace3D({ state, docked = false, track = false }: Props) {
 
       if (headMesh?.morphTargetInfluences) {
         const infl = headMesh.morphTargetInfluences;
-        // When the webcam drives the face, mirror the user's blink/mouth instead
-        // of the procedural blink + TTS envelope.
-        const bl = tracking ? live.blinkL : blinkFactor;
-        const br = tracking ? live.blinkR : blinkFactor;
-        const jw = tracking ? live.jaw : jawVal;
+        // In mirror mode, copy the user's blink/mouth. In follow mode keep the
+        // natural procedural blink + TTS envelope (only the head turns to you).
+        const imitate = tracking && live.mode === 'mirror';
+        const bl = imitate ? live.blinkL : blinkFactor;
+        const br = imitate ? live.blinkR : blinkFactor;
+        const jw = imitate ? live.jaw : jawVal;
         if (mIdxBlinkL >= 0) infl[mIdxBlinkL] = bl;
         if (mIdxBlinkR >= 0) infl[mIdxBlinkR] = br;
         if (mIdxJaw >= 0) infl[mIdxJaw] = jw;
@@ -470,19 +480,36 @@ export function JarvisFace3D({ state, docked = false, track = false }: Props) {
           if (stopped) return;
           if (video.readyState >= 2 && landmarker) {
             const res = landmarker.detectForVideo(video, performance.now()) as {
+              faceLandmarks?: { x: number; y: number; z: number }[][];
               faceBlendshapes?: { categories: { categoryName: string; score: number }[] }[];
               facialTransformationMatrixes?: { data: number[] }[];
             };
             const L = liveRef.current;
-            const mtx = res.facialTransformationMatrixes?.[0]?.data;
-            if (mtx) {
-              mat.fromArray(mtx);
-              eul.setFromRotationMatrix(mat, 'YXZ');
-              // Mirror horizontally (webcam is a mirror) + clamp to a natural range.
-              L.yaw = clamp(-eul.y * 1.1, 0.6);
-              L.pitch = clamp(eul.x * 1.1, 0.45);
-              L.roll = clamp(-eul.z, 0.4);
+            const mode = trackModeRef.current;
+            L.mode = mode;
+
+            if (mode === 'mirror') {
+              // Imitate your head orientation (mirror). --- flip signs here if reversed ---
+              const mtx = res.facialTransformationMatrixes?.[0]?.data;
+              if (mtx) {
+                mat.fromArray(mtx);
+                eul.setFromRotationMatrix(mat, 'YXZ');
+                L.yaw = clamp(-eul.y * 1.1, 0.6);
+                L.pitch = clamp(eul.x * 1.1, 0.45);
+                L.roll = clamp(-eul.z, 0.4);
+              }
+            } else {
+              // Follow: turn toward where you are (nose position in frame).
+              // --- flip the (fx-0.5)/(fy-0.5) signs here if it turns the wrong way ---
+              const lm = res.faceLandmarks?.[0];
+              const nose = lm?.[1];
+              if (nose) {
+                L.yaw = clamp((nose.x - 0.5) * 1.8, 0.6);
+                L.pitch = clamp((nose.y - 0.5) * 1.2, 0.4);
+                L.roll = 0;
+              }
             }
+
             const bs = res.faceBlendshapes?.[0]?.categories;
             if (bs) {
               const get = (n: string) => bs.find((c) => c.categoryName === n)?.score ?? 0;
