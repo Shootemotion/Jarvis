@@ -34,16 +34,38 @@ export class AppConfigService {
   }
 
   /**
-   * Embeddings backend. 'local' → Ollama (nomic-embed-text). 'openai' →
-   * text-embedding-3-small truncated to EMBEDDING_DIMENSIONS (cloud, no Ollama).
+   * Chat / generation provider override (CHAT_*). When apiKey is absent the
+   * ProviderRegistry falls back to the legacy OPENAI / ANTHROPIC / Ollama path.
+   */
+  get chat() {
+    return {
+      provider: this.env.CHAT_PROVIDER,
+      baseUrl: this.env.CHAT_BASE_URL,
+      apiKey: this.env.CHAT_API_KEY,
+      model: this.env.CHAT_MODEL,
+    };
+  }
+
+  /**
+   * Embeddings backend — SEPARATE from chat. 'local' → Ollama (nomic-embed-text).
+   * Otherwise an OpenAI-compatible endpoint (EMBEDDING_API_KEY/BASE_URL/MODEL),
+   * truncated to EMBEDDING_DIMENSIONS to match the pgvector column.
    */
   get embeddings() {
-    const provider = this.env.EMBEDDING_PROVIDER === 'openai' ? 'openai' : 'local';
+    const raw = this.env.EMBEDDING_PROVIDER || 'local';
+    const provider = raw === 'local' ? 'local' : raw; // 'local' | 'openai' | compat
+    const isRemote = provider !== 'local';
     const model =
-      provider === 'openai' && !this.env.EMBEDDING_MODEL.startsWith('text-embedding')
+      isRemote && !this.env.EMBEDDING_MODEL.startsWith('text-embedding')
         ? 'text-embedding-3-small'
         : this.env.EMBEDDING_MODEL;
-    return { provider, model, dimensions: this.env.EMBEDDING_DIMENSIONS };
+    return {
+      provider,
+      model,
+      dimensions: this.env.EMBEDDING_DIMENSIONS,
+      apiKey: this.env.EMBEDDING_API_KEY,
+      baseUrl: this.env.EMBEDDING_BASE_URL,
+    };
   }
 
   get billing() {

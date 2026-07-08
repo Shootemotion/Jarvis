@@ -12,6 +12,8 @@ export class ProviderRegistryService {
   private readonly logger = new Logger(ProviderRegistryService.name);
   private readonly providers = new Map<string, AIProvider>();
   private premiumName: string | null = null;
+  /** Dedicated embedding provider — SEPARATE from chat (Groq can't embed). */
+  private embeddingProvider: AIProvider | null = null;
 
   constructor(private readonly config: AppConfigService) {
     const ollama = new OllamaProvider({
@@ -22,30 +24,57 @@ export class ProviderRegistryService {
     });
     this.providers.set(ollama.name, ollama);
 
-    // Premium providers activate only when a key is present (Pro / cloud).
-    const anthropicKey = this.config.env.ANTHROPIC_API_KEY;
-    if (anthropicKey) {
-      this.providers.set('anthropic', new AnthropicProvider({ apiKey: anthropicKey }));
-      this.premiumName = 'anthropic';
-      this.logger.log('Anthropic provider enabled.');
-    }
-    const openaiKey = this.config.env.OPENAI_API_KEY;
-    if (openaiKey) {
-      const emb = this.config.embeddings;
+    // ---- Generation (chat) ----
+    // CHAT_* override wins; otherwise the legacy ANTHROPIC_*/OPENAI_* path.
+    const chat = this.config.chat;
+    if (chat.apiKey) {
+      const name = chat.provider === 'anthropic' ? 'anthropic' : 'openai';
       this.providers.set(
-        'openai',
-        new OpenAIProvider({
-          apiKey: openaiKey,
-          // Optional OpenAI-compatible endpoint (Groq/OpenRouter/…) + model.
-          baseUrl: this.config.env.OPENAI_BASE_URL,
-          defaultModel: this.config.env.OPENAI_DEFAULT_MODEL,
-          embeddingModel: emb.model,
-          embeddingDimensions: emb.dimensions,
-        }),
+        name,
+        name === 'anthropic'
+          ? new AnthropicProvider({ apiKey: chat.apiKey, defaultModel: chat.model })
+          : new OpenAIProvider({ apiKey: chat.apiKey, baseUrl: chat.baseUrl, defaultModel: chat.model }),
       );
-      if (!this.premiumName) this.premiumName = 'openai';
-      const where = this.config.env.OPENAI_BASE_URL ?? 'api.openai.com';
-      this.logger.log(`OpenAI-compatible provider enabled (${where}).`);
+      this.premiumName = name;
+      this.logger.log(`Chat provider: ${name} (${chat.baseUrl ?? 'default endpoint'}).`);
+    } else {
+      const anthropicKey = this.config.env.ANTHROPIC_API_KEY;
+      if (anthropicKey) {
+        this.providers.set('anthropic', new AnthropicProvider({ apiKey: anthropicKey }));
+        this.premiumName = 'anthropic';
+      }
+      const openaiKey = this.config.env.OPENAI_API_KEY;
+      if (openaiKey) {
+        this.providers.set(
+          'openai',
+          new OpenAIProvider({
+            apiKey: openaiKey,
+            baseUrl: this.config.env.OPENAI_BASE_URL,
+            defaultModel: this.config.env.OPENAI_DEFAULT_MODEL,
+          }),
+        );
+        if (!this.premiumName) this.premiumName = 'openai';
+      }
+      if (this.premiumName) this.logger.log(`Chat provider (legacy): ${this.premiumName}.`);
+    }
+
+    // ---- Embeddings (separate capability) ----
+    const emb = this.config.embeddings;
+    if (emb.provider === 'local') {
+      this.embeddingProvider = ollama; // nomic-embed-text
+    } else if (emb.apiKey) {
+      this.embeddingProvider = new OpenAIProvider({
+        apiKey: emb.apiKey,
+        baseUrl: emb.baseUrl,
+        embeddingModel: emb.model,
+        embeddingDimensions: emb.dimensions,
+      });
+      this.logger.log(`Embedding provider: ${emb.provider} (${emb.model}, ${emb.dimensions}d).`);
+    } else {
+      this.embeddingProvider = null;
+      this.logger.warn(
+        'No embedding provider configured — set EMBEDDING_API_KEY (OpenAI) or EMBEDDING_PROVIDER=local. Semantic memory/knowledge disabled.',
+      );
     }
   }
 
@@ -83,17 +112,26 @@ export class ProviderRegistryService {
     return this.getProvider('ollama');
   }
 
-  /**
-   * Generate an embedding. Uses OpenAI (cloud) when EMBEDDING_PROVIDER=openai and
-   * the OpenAI key is configured; otherwise the local Ollama model.
-   */
+  /** Is a dedicated embedding provider configured? */
+  hasEmbedding(): boolean {
+    return !!this.embeddingProvider?.embed;
+  }
+
+  /** Generate an embedding via the dedicated embedding provider (never chat/Groq). */
   async embed(text: string): Promise<number[]> {
-    const preferOpenai =
-      this.config.embeddings.provider === 'openai' && this.providers.has('openai');
-    const provider = this.getProvider(preferOpenai ? 'openai' : 'ollama');
-    if (!provider.embed) {
-      throw new Error('El proveedor de embeddings no soporta embed().');
+    const p = this.embeddingProvider;
+    if (!p?.embed) {
+      throw new Error(
+        'Embeddings no configurados. Definí EMBEDDING_API_KEY (OpenAI) o EMBEDDING_PROVIDER=local.',
+      );
     }
-    return provider.embed(text);
+    return p.embed(text);
+  }
+
+  /** Embed several texts (sequential; fine for milestone-scale ingestion). */
+  async embedMany(texts: string[]): Promise<number[][]> {
+    const out: number[][] = [];
+    for (const t of texts) out.push(await this.embed(t));
+    return out;
   }
 }

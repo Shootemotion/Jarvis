@@ -31,9 +31,19 @@ const envSchema = z.object({
   OLLAMA_BASE_URL: z.string().default('http://localhost:11434'),
   OLLAMA_DEFAULT_MODEL: z.string().default('qwen2.5:3b'),
 
-  EMBEDDING_PROVIDER: z.string().default('local'),
+  // --- Capability-separated providers (see docs/PROVIDER_ORCHESTRATION.md) ---
+  // Chat / generation. Falls back to OPENAI_*/ANTHROPIC_*/OLLAMA_* when unset.
+  CHAT_PROVIDER: z.string().optional(), // openai | anthropic | groq | ollama
+  CHAT_BASE_URL: z.string().optional(),
+  CHAT_API_KEY: z.string().optional(),
+  CHAT_MODEL: z.string().optional(),
+
+  // Embeddings — SEPARATE from chat (Groq has no /embeddings endpoint).
+  EMBEDDING_PROVIDER: z.string().default('local'), // local(ollama) | openai | compat
   EMBEDDING_MODEL: z.string().default('nomic-embed-text'),
   EMBEDDING_DIMENSIONS: z.coerce.number().default(768),
+  EMBEDDING_API_KEY: z.string().optional(),
+  EMBEDDING_BASE_URL: z.string().optional(),
 
   // Supabase (cloud mode auth). SUPABASE_JWT_SECRET verifies access tokens server-side.
   SUPABASE_URL: z.string().optional(),
