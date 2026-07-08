@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { createRemoteJWKSet, jwtVerify, JWTVerifyGetKey } from 'jose';
 import { AppConfigService } from '../config/config.service';
 import { UsersService } from './users.service';
+import { ApiTokensService } from './api-tokens.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 
 /**
@@ -26,6 +27,7 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly config: AppConfigService,
     private readonly users: UsersService,
+    private readonly apiTokens: ApiTokensService,
   ) {}
 
   /** Supabase's public signing keys (new asymmetric JWT signing keys). */
@@ -57,6 +59,15 @@ export class AuthGuard implements CanActivate {
     const header: string | undefined = req.headers['authorization'];
     if (!header?.startsWith('Bearer ')) {
       throw new UnauthorizedException('Falta el token de autenticación.');
+    }
+    const bearer = header.slice(7);
+
+    // JARVIS personal API token (e.g. Obsidian sync plugin).
+    if (ApiTokensService.looksLikeApiToken(bearer)) {
+      const user = await this.apiTokens.resolve(bearer);
+      if (!user) throw new UnauthorizedException('Token de API inválido.');
+      req.user = user;
+      return true;
     }
 
     try {

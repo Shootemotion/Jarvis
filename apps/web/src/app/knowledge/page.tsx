@@ -70,9 +70,14 @@ export default function KnowledgePage() {
     <main style={{ maxWidth: 760, margin: '0 auto', padding: 'clamp(1rem,4vw,2.5rem)', color: '#eaf2fb', minHeight: '100dvh' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1.5rem' }}>
         <h1 style={{ margin: 0 }}>📚 Conocimiento</h1>
-        <Link href="/" style={{ color: 'var(--accent,#38bdf8)', textDecoration: 'none', fontSize: '0.9rem' }}>
-          ← Volver
-        </Link>
+        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.9rem' }}>
+          <Link href="/settings/tokens" style={{ color: 'var(--accent,#38bdf8)', textDecoration: 'none' }}>
+            🔑 Tokens (Obsidian)
+          </Link>
+          <Link href="/" style={{ color: 'var(--accent,#38bdf8)', textDecoration: 'none' }}>
+            ← Volver
+          </Link>
+        </div>
       </div>
 
       {embeddingsOff && (

@@ -55,4 +55,23 @@ export class KnowledgeController {
     if (!body?.query?.trim()) throw new BadRequestException('Falta "query".');
     return this.knowledge.search(user.id, body.query, body.projectId);
   }
+
+  // ---- Obsidian sync plugin (authenticated with a jrv_ API token) ----
+
+  @Post('sync/manifest')
+  syncManifest(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { files: { path: string; hash: string }[]; fullSync?: boolean; projectId?: string },
+  ) {
+    return this.knowledge.syncManifest(user.id, body.files ?? [], body.fullSync !== false, body.projectId);
+  }
+
+  @Post('sync/push')
+  syncPush(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { files: { path: string; content: string }[]; projectId?: string },
+  ) {
+    if (!body?.files?.length) throw new BadRequestException('No hay archivos para sincronizar.');
+    return this.knowledge.syncPush(user.id, body.files, body.projectId);
+  }
 }

@@ -338,6 +338,69 @@ export class KnowledgeService {
     return { deleted: true };
   }
 
+  // ---- sync (Obsidian plugin / connector, Fase B) -------------------------
+
+  /**
+   * Compare the client's file manifest to the server. Returns paths to push
+   * (new/changed by hash); when fullSync, deletes server docs absent from the
+   * manifest and returns them.
+   */
+  async syncManifest(
+    userId: string,
+    files: { path: string; hash: string }[],
+    fullSync = true,
+    projectId?: string,
+  ) {
+    const norm = files
+      .map((f) => ({ path: this.normalizePath(f.path), hash: f.hash }))
+      .filter((f) => !this.ignoreReason(f.path, {}));
+    const existing = await this.prisma.document.findMany({
+      where: { userId, source: 'obsidian', projectId: projectId ?? null },
+      select: { path: true, contentHash: true },
+    });
+    const have = new Map(existing.map((d) => [d.path, d.contentHash]));
+    const push = norm.filter((f) => have.get(f.path) !== f.hash).map((f) => f.path);
+
+    let deleted: string[] = [];
+    if (fullSync) {
+      const client = new Set(norm.map((f) => f.path));
+      deleted = existing.filter((d) => !client.has(d.path)).map((d) => d.path);
+      if (deleted.length) {
+        await this.prisma.document.deleteMany({
+          where: { userId, source: 'obsidian', projectId: projectId ?? null, path: { in: deleted } },
+        });
+      }
+    }
+    return { push, deleted };
+  }
+
+  /** Ingest a batch of markdown files pushed by the sync client. */
+  async syncPush(
+    userId: string,
+    files: { path: string; content: string }[],
+    projectId?: string,
+  ) {
+    if (!this.registry.hasEmbedding()) {
+      throw new Error('No hay proveedor de embeddings configurado.');
+    }
+    const results: { path: string; status: string; chunks: number }[] = [];
+    for (const f of files) {
+      const path = this.normalizePath(f.path);
+      const reason = this.ignoreReason(path, {});
+      if (reason) {
+        results.push({ path, status: 'ignored', chunks: 0 });
+        continue;
+      }
+      try {
+        results.push(await this.ingestOne(userId, { path, raw: f.content, bytes: f.content.length }, projectId));
+      } catch (err) {
+        this.logger.error(`Sync push ${path}: ${String(err)}`);
+        results.push({ path, status: 'error', chunks: 0 });
+      }
+    }
+    return { pushed: results.length, results };
+  }
+
   async search(
     userId: string,
     query: string,

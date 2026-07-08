@@ -97,6 +97,15 @@ export interface ProvidersInfo {
   managedForAll: boolean;
 }
 
+export interface ApiTokenInfo {
+  id: string;
+  name: string;
+  prefix: string;
+  scope: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
 export interface Memory {
   id: string;
   type: string;
@@ -214,6 +223,13 @@ export const api = {
   getProviders: () => request<ProvidersInfo>('/providers'),
   getOrchestratorRecent: () => request<ActionLogEntry[]>('/orchestrator/recent'),
   getTools: () => request<ToolInfo[]>('/orchestrator/tools'),
+  listTokens: () => request<ApiTokenInfo[]>('/tokens'),
+  createToken: (name: string) =>
+    request<{ id: string; token: string; prefix: string }>('/tokens', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  revokeToken: (id: string) => request<{ revoked: boolean }>(`/tokens/${id}`, { method: 'DELETE' }),
   listDocuments: () => request<KnowledgeDoc[]>('/knowledge/documents'),
   deleteDocument: (id: string) =>
     request<{ deleted: boolean }>(`/knowledge/documents/${id}`, { method: 'DELETE' }),

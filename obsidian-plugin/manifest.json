@@ -1,0 +1,9 @@
+{
+  "id": "jarvis-sync",
+  "name": "JARVIS Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Sincroniza tu vault de Obsidian con JARVIS Cloud como base de conocimiento (embeddings + búsqueda semántica).",
+  "author": "JARVIS",
+  "isDesktopOnly": true
+}
