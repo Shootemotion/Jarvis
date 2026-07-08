@@ -24,6 +24,8 @@ export function JarvisShell() {
 
   // Interaction mode: voice-first by default; switch to chat for typing.
   const [mode, setMode] = useState<'voice' | 'chat'>('voice');
+  // Webcam head tracking (avatar mirrors the user). Opt-in (permission + heavy).
+  const [camera, setCamera] = useState(false);
 
   // Voice: STT (local Whisper) feeds the chat; TTS speaks the reply.
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -111,7 +113,7 @@ export function JarvisShell() {
     <div className={styles.shell} style={accentVar}>
       {/* Living neural field + 3D face (fixed full-viewport background).
           Centered in voice mode; docks aside in chat mode. */}
-      <JarvisAvatar state={state} docked={mode === 'chat'} />
+      <JarvisAvatar state={state} docked={mode === 'chat'} track={camera} />
 
       <header className={styles.header}>
         <div className={styles.brandWrap}>
@@ -221,6 +223,15 @@ export function JarvisShell() {
                 style={voiceEnabled ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
               >
                 {voiceEnabled ? '🔊' : '🔇'}
+              </button>
+              <button
+                type="button"
+                className={styles.navLink}
+                onClick={() => setCamera((c) => !c)}
+                title="Seguir mi cabeza con la cámara"
+                style={camera ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
+              >
+                {camera ? '📷 ON' : '📷'}
               </button>
               {voice.voices.length > 1 && (
                 <select

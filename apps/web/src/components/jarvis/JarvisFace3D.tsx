@@ -14,9 +14,27 @@ import { JARVIS_STATE_META, JarvisVisualState } from './types';
 interface Props {
   state: JarvisVisualState;
   docked?: boolean;
+  /** When true, the webcam (MediaPipe FaceLandmarker) drives head pose + face. */
+  track?: boolean;
 }
 
 const BG_COLOR = 0x04060a;
+
+const MP_VERSION = '0.10.35';
+const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
+const MP_MODEL =
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+
+/** Live tracking values written by MediaPipe, read by the render loop. */
+interface LiveFace {
+  active: boolean;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  blinkL: number;
+  blinkR: number;
+  jaw: number;
+}
 
 /** Small round sprite so points render as dots, not squares. */
 function makeDotTexture(): THREE.CanvasTexture {
@@ -71,12 +89,22 @@ function morphIndex(dict: Record<string, number>, ...cands: string[]): number {
  * a holographic wireframe with bloom. Real blinking + mouth movement via morph
  * targets. Same ARKit blendshapes a webcam FaceLandmarker outputs (Phase B).
  */
-export function JarvisFace3D({ state, docked = false }: Props) {
+export function JarvisFace3D({ state, docked = false, track = false }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const dockedRef = useRef(docked);
   dockedRef.current = docked;
+  const liveRef = useRef<LiveFace>({
+    active: false,
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    blinkL: 0,
+    blinkR: 0,
+    jaw: 0,
+  });
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -245,7 +273,7 @@ export function JarvisFace3D({ state, docked = false }: Props) {
     ro.observe(mount);
     resize();
 
-    let targetYaw = 0, targetPitch = 0, yaw = 0, pitch = 0, gx = 0, gScale = 1;
+    let targetYaw = 0, targetPitch = 0, yaw = 0, pitch = 0, roll = 0, gx = 0, gScale = 1;
     let blinkFactor = 0, blinkTimer = 2 + Math.random() * 3, blinking = false, blinkT = 0;
     let jawVal = 0;
     function onMove(e: MouseEvent) {
@@ -272,12 +300,20 @@ export function JarvisFace3D({ state, docked = false }: Props) {
       for (const mat of headMats) { mat.color.copy(curColor); mat.opacity = 0.4 * p.dim; }
       bloom.strength += (p.bloom - bloom.strength) * Math.min(1, dt * 3);
 
-      // pose
-      const baseYaw = -0.12, basePitch = 0.03;
-      const swayY = Math.sin(t * 0.45) * 0.08, swayP = Math.sin(t * 0.33) * 0.04;
-      const pe = Math.min(1, dt * 4);
+      // pose — mouse-follow + gentle idle sway, or webcam tracking when active.
+      const live = liveRef.current;
+      const tracking = live.active;
+      if (tracking) {
+        targetYaw = live.yaw;
+        targetPitch = live.pitch;
+      }
+      const baseYaw = tracking ? 0 : -0.12, basePitch = tracking ? 0 : 0.03;
+      const swayY = tracking ? 0 : Math.sin(t * 0.45) * 0.08;
+      const swayP = tracking ? 0 : Math.sin(t * 0.33) * 0.04;
+      const pe = Math.min(1, dt * (tracking ? 8 : 4));
       yaw += (targetYaw + baseYaw + swayY - yaw) * pe;
       pitch += (targetPitch + basePitch + swayP - pitch) * pe;
+      roll += ((tracking ? live.roll : 0) - roll) * pe;
 
       const wide = window.innerWidth > 900;
       // Docked (chat mode): aside-left on desktop; small & tucked near the top on
@@ -293,6 +329,7 @@ export function JarvisFace3D({ state, docked = false }: Props) {
       group.scale.setScalar(gScale * breathe);
       group.rotation.y = yaw + (p.jitter ? (Math.random() - 0.5) * p.jitter : 0);
       group.rotation.x = pitch + (p.jitter ? (Math.random() - 0.5) * p.jitter : 0);
+      group.rotation.z = roll;
 
       // blink
       if (st !== 'offline') {
@@ -318,10 +355,15 @@ export function JarvisFace3D({ state, docked = false }: Props) {
 
       if (headMesh?.morphTargetInfluences) {
         const infl = headMesh.morphTargetInfluences;
-        if (mIdxBlinkL >= 0) infl[mIdxBlinkL] = blinkFactor;
-        if (mIdxBlinkR >= 0) infl[mIdxBlinkR] = blinkFactor;
-        if (mIdxJaw >= 0) infl[mIdxJaw] = jawVal;
-        if (mIdxMouth >= 0 && mIdxMouth !== mIdxJaw) infl[mIdxMouth] = jawVal * 0.5;
+        // When the webcam drives the face, mirror the user's blink/mouth instead
+        // of the procedural blink + TTS envelope.
+        const bl = tracking ? live.blinkL : blinkFactor;
+        const br = tracking ? live.blinkR : blinkFactor;
+        const jw = tracking ? live.jaw : jawVal;
+        if (mIdxBlinkL >= 0) infl[mIdxBlinkL] = bl;
+        if (mIdxBlinkR >= 0) infl[mIdxBlinkR] = br;
+        if (mIdxJaw >= 0) infl[mIdxJaw] = jw;
+        if (mIdxMouth >= 0 && mIdxMouth !== mIdxJaw) infl[mIdxMouth] = jw * 0.5;
       }
 
       // background drift + colors
@@ -385,5 +427,99 @@ export function JarvisFace3D({ state, docked = false }: Props) {
     };
   }, []);
 
-  return <div ref={mountRef} className={styles.field} aria-hidden="true" />;
+  // ---- webcam head tracking (MediaPipe FaceLandmarker), opt-in via `track` ----
+  useEffect(() => {
+    if (!track) {
+      liveRef.current.active = false;
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) return;
+    let stopped = false;
+    let raf = 0;
+    let landmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close?: () => void } | null = null;
+    let stream: MediaStream | null = null;
+    const mat = new THREE.Matrix4();
+    const eul = new THREE.Euler();
+    const clamp = (v: number, lim: number) => Math.max(-lim, Math.min(lim, v));
+
+    (async () => {
+      try {
+        const vision = await import('@mediapipe/tasks-vision');
+        const { FaceLandmarker, FilesetResolver } = vision;
+        const fileset = await FilesetResolver.forVisionTasks(MP_WASM);
+        landmarker = (await FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: MP_MODEL, delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: true,
+        })) as unknown as typeof landmarker;
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+          audio: false,
+        });
+        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        video.srcObject = stream;
+        video.muted = true;
+        await video.play();
+        liveRef.current.active = true;
+
+        const loop = () => {
+          if (stopped) return;
+          if (video.readyState >= 2 && landmarker) {
+            const res = landmarker.detectForVideo(video, performance.now()) as {
+              faceBlendshapes?: { categories: { categoryName: string; score: number }[] }[];
+              facialTransformationMatrixes?: { data: number[] }[];
+            };
+            const L = liveRef.current;
+            const mtx = res.facialTransformationMatrixes?.[0]?.data;
+            if (mtx) {
+              mat.fromArray(mtx);
+              eul.setFromRotationMatrix(mat, 'YXZ');
+              // Mirror horizontally (webcam is a mirror) + clamp to a natural range.
+              L.yaw = clamp(-eul.y * 1.1, 0.6);
+              L.pitch = clamp(eul.x * 1.1, 0.45);
+              L.roll = clamp(-eul.z, 0.4);
+            }
+            const bs = res.faceBlendshapes?.[0]?.categories;
+            if (bs) {
+              const get = (n: string) => bs.find((c) => c.categoryName === n)?.score ?? 0;
+              L.blinkL = get('eyeBlinkLeft');
+              L.blinkR = get('eyeBlinkRight');
+              L.jaw = Math.max(get('jawOpen'), get('mouthOpen'));
+            }
+          }
+          raf = requestAnimationFrame(loop);
+        };
+        raf = requestAnimationFrame(loop);
+      } catch (err) {
+        console.error('Camera tracking failed:', err);
+        liveRef.current.active = false;
+      }
+    })();
+
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+      liveRef.current.active = false;
+      try { landmarker?.close?.(); } catch { /* noop */ }
+      stream?.getTracks().forEach((t) => t.stop());
+      if (video) video.srcObject = null;
+    };
+  }, [track]);
+
+  return (
+    <>
+      <div ref={mountRef} className={styles.field} aria-hidden="true" />
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        aria-hidden="true"
+        style={{ position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', bottom: 0, left: 0 }}
+      />
+    </>
+  );
 }
