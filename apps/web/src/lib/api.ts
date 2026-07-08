@@ -27,6 +27,39 @@ export interface ChatReply {
   memoriesUsed?: number;
   sources?: KnowledgeSource[];
   embeddingProvider?: string | null;
+  orchestration?: Orchestration;
+}
+
+export interface Orchestration {
+  taskType: string;
+  provider: string;
+  model: string;
+  requiredKnowledgeSources: string[];
+  requiredTools: string[];
+  reason: string;
+  estimatedCost: number;
+  requiresConfirmation: boolean;
+}
+
+export interface ActionLogEntry {
+  id: string;
+  taskType: string;
+  provider: string | null;
+  model: string | null;
+  knowledgeSources: number;
+  toolsUsed: string[];
+  estimatedCost: number;
+  createdAt: string;
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  requiredPlan: string;
+  requiresConfirmation: boolean;
+  costLevel: string;
+  riskLevel: string;
+  enabled: boolean;
 }
 
 export interface IngestResult {
@@ -179,6 +212,8 @@ export const api = {
     openaiKey?: string;
   }) => request<AiSettings>('/settings/ai', { method: 'PUT', body: JSON.stringify(body) }),
   getProviders: () => request<ProvidersInfo>('/providers'),
+  getOrchestratorRecent: () => request<ActionLogEntry[]>('/orchestrator/recent'),
+  getTools: () => request<ToolInfo[]>('/orchestrator/tools'),
   listDocuments: () => request<KnowledgeDoc[]>('/knowledge/documents'),
   deleteDocument: (id: string) =>
     request<{ deleted: boolean }>(`/knowledge/documents/${id}`, { method: 'DELETE' }),

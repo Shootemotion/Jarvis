@@ -15,6 +15,7 @@ import { EntitlementsService } from '../entitlements/entitlements.service';
 import { UsageService } from '../metering/usage.service';
 import { AiSettingsService } from '../ai-settings/ai-settings.service';
 import { AppConfigService } from '../config/config.service';
+import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { FEATURES } from '../entitlements/plans';
 import { ChatDto } from './dto';
 import { JARVIS_SYSTEM_PROMPT } from './system-prompt';
@@ -37,6 +38,7 @@ export class ChatService {
     private readonly usage: UsageService,
     private readonly aiSettings: AiSettingsService,
     private readonly config: AppConfigService,
+    private readonly orchestrator: OrchestratorService,
   ) {}
 
   async chat(userId: string, dto: ChatDto) {
@@ -68,47 +70,8 @@ export class ChatService {
       },
     });
 
-    // Retrieve relevant long-term memories + user knowledge (best-effort).
-    const memories = await this.retrieveMemories(
-      userId,
-      dto.message,
-      conversation.projectId ?? undefined,
-    );
-    const knowledgeHits = (
-      await this.knowledge
-        .search(userId, dto.message, conversation.projectId ?? undefined, MEMORY_TOP_K)
-        .catch(() => [] as KnowledgeHit[])
-    ).filter((h) => h.score >= MEMORY_MIN_SCORE);
-
-    // Build the prompt: system (+ memory context) + recent history.
-    const history = await this.prisma.message.findMany({
-      where: { conversationId: conversation.id },
-      orderBy: { createdAt: 'asc' },
-      take: MAX_HISTORY,
-    });
-
-    const blocks = [JARVIS_SYSTEM_PROMPT];
-    if (memories.length > 0) blocks.push(this.buildMemoryBlock(memories));
-    if (knowledgeHits.length > 0) blocks.push(this.buildKnowledgeBlock(knowledgeHits));
-    const systemContent = blocks.join('\n\n');
-
-    // Citable sources (file › heading) surfaced to the client + audit metadata.
-    const sources = knowledgeHits.map((h) => ({
-      path: h.path,
-      heading: h.heading,
-      score: Math.round(h.score * 100) / 100,
-    }));
-
-    const messages: ChatMessage[] = [
-      { role: 'system', content: systemContent },
-      ...history.map((m) => ({
-        role: m.role as ChatMessage['role'],
-        content: m.content,
-      })),
-    ];
-
-    // Provider resolution: BYO key first (any plan), then managed premium for
-    // Pro, else local Ollama. Honors the user's provider preference.
+    // 1) Resolve the provider first (BYO key → managed premium → Ollama) so the
+    // orchestrator can plan around what will actually run.
     const ai = await this.aiSettings.getResolved(userId);
     const order =
       ai.preferredProvider === 'auto' ? ['anthropic', 'openai'] : [ai.preferredProvider];
@@ -130,8 +93,6 @@ export class ChatService {
       }
     }
     if (!provider) {
-      // No BYO/managed provider resolved. In a managed-only deployment (cloud,
-      // no Ollama) this means the server premium key is missing — say so clearly.
       if (this.config.managedLlmForAll && !this.registry.hasPremium()) {
         throw new ServiceUnavailableException(
           'No hay un modelo premium configurado en el servidor. Falta OPENAI_API_KEY (o ANTHROPIC_API_KEY).',
@@ -139,11 +100,77 @@ export class ChatService {
       }
       provider = this.registry.getProvider('ollama');
     }
-    this.logger.log(`chat -> provider=${provider.name} (plan=${ent.plan}, source=${source})`);
+
+    // 2) Orchestration plan: task type, knowledge sources, model tier, tools, cost.
+    const baseModel = source === 'byo' ? ai.model : this.config.chatModelResolved;
+    // Knowledge sources are a Pro capability — also enabled when the deployment
+    // grants managed access to everyone (single-owner / MANAGED_LLM_FOR_ALL).
+    const knowledgePlan =
+      ent.plan === 'pro' || this.config.managedLlmForAll ? 'pro' : 'free';
+    const plan = this.orchestrator.buildPlan({
+      message: dto.message,
+      projectId: conversation.projectId ?? undefined,
+      plan: knowledgePlan,
+      providerName: provider.name,
+      baseModel,
+      hasEmbedding: this.registry.hasEmbedding(),
+    });
+
+    // 3) Gather knowledge per the plan's required sources (best-effort).
+    const wantMemory = plan.requiredKnowledgeSources.includes('memory');
+    const wantDocs =
+      plan.requiredKnowledgeSources.includes('documents') ||
+      plan.requiredKnowledgeSources.includes('obsidian');
+    const memories = wantMemory
+      ? await this.retrieveMemories(userId, dto.message, conversation.projectId ?? undefined)
+      : [];
+    const knowledgeHits = wantDocs
+      ? (
+          await this.knowledge
+            .search(userId, dto.message, conversation.projectId ?? undefined, MEMORY_TOP_K)
+            .catch(() => [] as KnowledgeHit[])
+        ).filter((h) => h.score >= MEMORY_MIN_SCORE)
+      : [];
+
+    const history = await this.prisma.message.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'asc' },
+      take: MAX_HISTORY,
+    });
+
+    // 4) System prompt = base + mode addendum + memory + knowledge.
+    const modeAddendum = this.orchestrator.modePrompt(plan.taskType);
+    const blocks = [JARVIS_SYSTEM_PROMPT];
+    if (modeAddendum) blocks.push(modeAddendum);
+    if (memories.length > 0) blocks.push(this.buildMemoryBlock(memories));
+    if (knowledgeHits.length > 0) blocks.push(this.buildKnowledgeBlock(knowledgeHits));
+    const systemContent = blocks.join('\n\n');
+
+    const sources = knowledgeHits.map((h) => ({
+      path: h.path,
+      heading: h.heading,
+      score: Math.round(h.score * 100) / 100,
+    }));
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemContent },
+      ...history.map((m) => ({
+        role: m.role as ChatMessage['role'],
+        content: m.content,
+      })),
+    ];
+
+    this.logger.log(
+      `chat -> provider=${provider.name} model=${plan.model} task=${plan.taskType} source=${source}`,
+    );
+
+    // 5) Generation model: BYO keeps the user's model; managed uses the plan's pick.
+    const genModel =
+      source === 'byo' ? reqModel : plan.model && plan.model !== 'default' ? plan.model : undefined;
 
     let reply;
     try {
-      reply = await provider.chat({ messages, model: reqModel });
+      reply = await provider.chat({ messages, model: genModel });
     } catch (err) {
       this.logger.error(`Provider error: ${String(err)}`);
       throw new ServiceUnavailableException(
@@ -165,6 +192,7 @@ export class ChatService {
           latencyMs: reply.latencyMs,
           plan: ent.plan,
           source,
+          taskType: plan.taskType,
           knowledgeSources: sources,
         } as unknown as Prisma.InputJsonObject,
       },
@@ -189,11 +217,11 @@ export class ChatService {
       .create({
         data: {
           userId,
-          taskType: dto.taskType ?? 'answer',
+          taskType: plan.taskType,
           provider: reply.provider,
           model: reply.model,
           knowledgeSources: sources.length,
-          toolsUsed: [],
+          toolsUsed: plan.requiredTools,
           estimatedCost,
         },
       })
@@ -216,6 +244,16 @@ export class ChatService {
       memoriesUsed: memories.length,
       sources,
       embeddingProvider,
+      orchestration: {
+        taskType: plan.taskType,
+        provider: plan.provider,
+        model: plan.model,
+        requiredKnowledgeSources: plan.requiredKnowledgeSources,
+        requiredTools: plan.requiredTools,
+        reason: plan.reason,
+        estimatedCost: plan.estimatedCost,
+        requiresConfirmation: plan.requiresConfirmation,
+      },
     };
   }
 

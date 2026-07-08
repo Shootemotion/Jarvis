@@ -230,6 +230,9 @@ export function JarvisShell() {
               <Link href="/knowledge" className={styles.navLink}>
                 📚 Conocimiento
               </Link>
+              <Link href="/orchestrator" className={styles.navLink} title="Orquestador">
+                🧭
+              </Link>
               <Link href="/memory" className={styles.navLink}>
                 🧠 Memoria
               </Link>
@@ -312,6 +315,7 @@ export function JarvisShell() {
                         }`
                       : ''}
                     {m.meta.embeddingProvider ? ` · emb: ${m.meta.embeddingProvider}` : ''}
+                    {m.meta.taskType ? ` · ⚙ ${m.meta.taskType}` : ''}
                   </span>
                 )}
                 {m.meta?.sources && m.meta.sources.length > 0 && (

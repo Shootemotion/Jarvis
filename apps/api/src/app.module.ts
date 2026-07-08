@@ -12,6 +12,7 @@ import { HealthModule } from './health/health.module';
 import { ProjectsModule } from './projects/projects.module';
 import { MemoryModule } from './memory/memory.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
+import { OrchestratorModule } from './orchestrator/orchestrator.module';
 import { ChatModule } from './chat/chat.module';
 
 @Module({
@@ -29,6 +30,7 @@ import { ChatModule } from './chat/chat.module';
     ProjectsModule,
     MemoryModule,
     KnowledgeModule,
+    OrchestratorModule,
     ChatModule,
   ],
 })

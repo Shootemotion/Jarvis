@@ -46,6 +46,11 @@ export class AppConfigService {
     };
   }
 
+  /** Configured chat model (CHAT_MODEL, else legacy OPENAI_DEFAULT_MODEL). */
+  get chatModelResolved(): string | undefined {
+    return this.env.CHAT_MODEL ?? this.env.OPENAI_DEFAULT_MODEL ?? undefined;
+  }
+
   /**
    * Embeddings backend — SEPARATE from chat. 'local' → Ollama (nomic-embed-text).
    * Otherwise an OpenAI-compatible endpoint (EMBEDDING_API_KEY/BASE_URL/MODEL),

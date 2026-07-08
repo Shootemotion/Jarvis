@@ -16,6 +16,7 @@ export interface UiMessage {
     memoriesUsed?: number;
     sources?: KnowledgeSource[];
     embeddingProvider?: string | null;
+    taskType?: string;
   };
 }
 
@@ -54,6 +55,7 @@ export function useChat(projectId?: string) {
               memoriesUsed: res.memoriesUsed,
               sources: res.sources,
               embeddingProvider: res.embeddingProvider,
+              taskType: res.orchestration?.taskType,
             },
           },
         ]);
