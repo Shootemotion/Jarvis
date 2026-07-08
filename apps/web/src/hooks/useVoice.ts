@@ -25,6 +25,16 @@ interface Options {
 
 export type VoiceModelStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+/** Native Web Speech API constructor (Chrome/Edge/Safari), if present. */
+function getSpeechRecognition(): (new () => any) | null {
+  if (typeof window === 'undefined') return null;
+  const w = window as unknown as {
+    SpeechRecognition?: new () => any;
+    webkitSpeechRecognition?: new () => any;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
 /**
  * Local voice I/O: STT via in-browser Whisper (Web Worker), TTS via the OS
  * speech synthesizer. Fully local — no audio leaves the machine.
@@ -34,6 +44,10 @@ export function useVoice({ onTranscript }: Options) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  // Native Web Speech API (real-time STT). Preferred when available.
+  const recognitionRef = useRef<any>(null);
+  const nativeSTTRef = useRef(false);
+  const finalTextRef = useRef('');
 
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -71,6 +85,24 @@ export function useVoice({ onTranscript }: Options) {
   }, []);
 
   useEffect(() => {
+    const SR = getSpeechRecognition();
+    if (SR) {
+      // Real-time, no model download. This is the fast path (Chrome/Edge/Safari).
+      nativeSTTRef.current = true;
+      setSupported(true);
+      setModelStatus('ready');
+      return () => {
+        try {
+          recognitionRef.current?.abort();
+        } catch {
+          /* noop */
+        }
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+      };
+    }
+
+    // Fallback: in-browser Whisper (Web Worker). Only loaded when there's no
+    // native speech recognition — avoids downloading the heavy model needlessly.
     setSupported(
       typeof window !== 'undefined' &&
         !!navigator.mediaDevices?.getUserMedia &&
@@ -104,6 +136,46 @@ export function useVoice({ onTranscript }: Options) {
 
   const startListening = useCallback(async () => {
     if (listening || transcribing) return;
+
+    // Native real-time path.
+    if (nativeSTTRef.current) {
+      const SR = getSpeechRecognition();
+      if (!SR) return;
+      const rec = new SR();
+      rec.lang = 'es-AR';
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+      finalTextRef.current = '';
+      rec.onresult = (ev: any) => {
+        let finalText = '';
+        for (let i = 0; i < ev.results.length; i++) {
+          if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
+        }
+        if (finalText) finalTextRef.current = finalText;
+      };
+      rec.onerror = (ev: any) => {
+        if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
+          console.error('SpeechRecognition:', ev.error);
+        }
+      };
+      rec.onend = () => {
+        setListening(false);
+        recognitionRef.current = null;
+        onTranscript(finalTextRef.current.trim());
+      };
+      recognitionRef.current = rec;
+      try {
+        rec.start();
+        setListening(true);
+      } catch (err) {
+        console.error('SpeechRecognition start:', err);
+        setListening(false);
+      }
+      return;
+    }
+
+    // Fallback: record → Whisper.
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -134,6 +206,15 @@ export function useVoice({ onTranscript }: Options) {
   }, [listening, transcribing]);
 
   const stopListening = useCallback(() => {
+    if (nativeSTTRef.current) {
+      // stop() finalizes and fires onend → sends the transcript.
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* noop */
+      }
+      return;
+    }
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       recorderRef.current.stop();
     }
