@@ -55,7 +55,6 @@ export function JarvisShell() {
   }, [messages.length, sending]);
 
   const lastMeta = [...messages].reverse().find((m) => m.meta)?.meta;
-  const lastReply = [...messages].reverse().find((m) => m.role === 'assistant')?.content;
 
   const handleSend = async (text: string) => {
     setState('thinking');
@@ -170,6 +169,24 @@ export function JarvisShell() {
           >
             {voiceEnabled ? '🔊' : '🔇'}
           </button>
+          {voice.voices.length > 1 && (
+            <select
+              className={styles.select}
+              value={voice.voiceURI}
+              onChange={(e) => {
+                voice.setVoiceURI(e.target.value);
+                voice.speak('Hola, soy JARVIS.');
+              }}
+              aria-label="Voz"
+              title="Elegí la voz de JARVIS"
+            >
+              {voice.voices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+          )}
           <Link href="/settings/ai" className={styles.navLink} title="Ajustes">
             ⚙️
           </Link>
@@ -240,24 +257,6 @@ export function JarvisShell() {
                   {voice.transcribing ? '⏳' : voice.listening ? '⏹' : '🎤'}
                 </button>
               )}
-              {voice.voices.length > 1 && (
-                <select
-                  className={styles.select}
-                  value={voice.voiceURI}
-                  onChange={(e) => {
-                    voice.setVoiceURI(e.target.value);
-                    voice.speak('Hola, soy JARVIS.');
-                  }}
-                  aria-label="Voz"
-                  title="Elegí la voz"
-                >
-                  {voice.voices.map((v) => (
-                    <option key={v.voiceURI} value={v.voiceURI}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
-              )}
             </>
           )}
 
@@ -324,7 +323,6 @@ export function JarvisShell() {
         </>
       ) : (
         <div className={styles.voiceStage}>
-          {lastReply && <p className={styles.voiceReply}>{lastReply}</p>}
           {voice.supported ? (
             <button
               type="button"
