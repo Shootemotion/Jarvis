@@ -13,7 +13,7 @@ async function bootstrap() {
   const allowed = config.corsOrigins;
   app.enableCors({
     origin: (origin, cb) =>
-      cb(null, !origin || allowed.includes(origin)),
+      cb(null, !origin || allowed.includes(origin.replace(/\/+$/, ''))),
     credentials: true,
   });
   app.setGlobalPrefix('api');

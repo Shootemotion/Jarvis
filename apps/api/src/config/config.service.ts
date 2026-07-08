@@ -50,7 +50,7 @@ export class AppConfigService {
     return {
       mpAccessToken: this.env.MP_ACCESS_TOKEN,
       mpWebhookSecret: this.env.MP_WEBHOOK_SECRET,
-      webUrl: this.env.PUBLIC_WEB_URL,
+      webUrl: this.env.PUBLIC_WEB_URL.replace(/\/+$/, ''),
       proPriceArs: this.env.PRO_PRICE_ARS,
       proTrialDays: this.env.PRO_TRIAL_DAYS,
     };
@@ -66,11 +66,14 @@ export class AppConfigService {
    * (dev) plus the configured public web URL.
    */
   get corsOrigins(): string[] {
+    // Normalize: trim + drop trailing slashes so a value like
+    // "https://app.vercel.app/" still matches the browser Origin (no slash).
+    const norm = (s: string) => s.trim().replace(/\/+$/, '');
     if (this.env.CORS_ORIGINS) {
-      return this.env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+      return this.env.CORS_ORIGINS.split(',').map(norm).filter(Boolean);
     }
     const origins = ['http://localhost:3000'];
-    if (this.env.PUBLIC_WEB_URL) origins.push(this.env.PUBLIC_WEB_URL);
+    if (this.env.PUBLIC_WEB_URL) origins.push(norm(this.env.PUBLIC_WEB_URL));
     return origins;
   }
 }
