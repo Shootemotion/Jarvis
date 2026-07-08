@@ -35,6 +35,8 @@ model User {
   payments         Payment[]
   documents        Document[]
   documentChunks   DocumentChunk[]
+  ingestionJobs    IngestionJob[]
+  actionLogs       ActionLog[]
 
   @@map("users")
 }
@@ -127,24 +129,28 @@ model Payment {
 // Knowledge source document (Obsidian import / uploaded file). See
 // docs/MEMORY_ARCHITECTURE.md + docs/OBSIDIAN_INTEGRATION.md.
 model Document {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String   @map("user_id") @db.Uuid
-  projectId  String?  @map("project_id") @db.Uuid
-  source     String // 'obsidian' | 'upload'
-  title      String
-  path       String // original path within the vault, e.g. "Folder/Sub/note.md"
-  mime       String   @default("text/markdown")
-  tags       String[]
-  bytes      Int      @default(0)
-  status     String   @default("pending") // pending | indexing | indexed | error
-  chunkCount Int      @default(0) @map("chunk_count")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  projectId   String?  @map("project_id") @db.Uuid
+  source      String // 'obsidian' | 'upload'
+  title       String
+  path        String // original path within the vault, e.g. "Folder/Sub/note.md"
+  mime        String   @default("text/markdown")
+  tags        String[]
+  bytes       Int      @default(0)
+  // sha256 of the raw content → idempotent re-imports (skip when unchanged).
+  contentHash String?  @map("content_hash")
+  status      String   @default("pending") // pending | indexing | indexed | error
+  chunkCount  Int      @default(0) @map("chunk_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   chunks DocumentChunk[]
 
-  @@unique([userId, source, path])
+  // Logical identity: userId + source + projectId + path (handled in code; same
+  // path can exist under different projects). Index for fast lookup.
+  @@index([userId, source, path])
   @@index([userId])
   @@map("documents")
 }
@@ -170,6 +176,44 @@ model DocumentChunk {
   @@index([userId])
   @@index([documentId])
   @@map("document_chunks")
+}
+
+// Import/indexing job (synchronous today; ready to move to BullMQ/Redis later).
+model IngestionJob {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  projectId      String?   @map("project_id") @db.Uuid
+  source         String
+  status         String    @default("pending") // pending | processing | completed | failed
+  totalFiles     Int       @default(0) @map("total_files")
+  processedFiles Int       @default(0) @map("processed_files")
+  failedFiles    Int       @default(0) @map("failed_files")
+  error          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  completedAt    DateTime? @map("completed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("ingestion_jobs")
+}
+
+// Basic audit of what the orchestrator did per request.
+model ActionLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  taskType         String   @map("task_type")
+  provider         String?
+  model            String?
+  knowledgeSources Int      @default(0) @map("knowledge_sources")
+  toolsUsed        String[] @map("tools_used")
+  estimatedCost    Float    @default(0) @map("estimated_cost")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("action_logs")
 }
 
 model Project {

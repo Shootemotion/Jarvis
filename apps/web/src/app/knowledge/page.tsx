@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { api, KnowledgeDoc, KnowledgeHit, ProvidersInfo } from '@/lib/api';
+import { api, KnowledgeDoc, KnowledgeHit, ProvidersInfo, IngestResult } from '@/lib/api';
 
 const box: React.CSSProperties = {
   background: 'var(--panel,#0e1620)',
@@ -19,6 +19,7 @@ export default function KnowledgePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
+  const [lastJob, setLastJob] = useState<IngestResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadDocs = () => api.listDocuments().then(setDocs).catch(() => setDocs([]));
@@ -34,8 +35,8 @@ export default function KnowledgePage() {
     setMsg(null);
     try {
       const res = await api.uploadKnowledge(Array.from(files));
-      const ok = res.documents.filter((d) => d.status === 'indexed').length;
-      setMsg(`Indexados ${ok}/${res.ingested} archivos ✓`);
+      setLastJob(res);
+      setMsg(`Procesados ${res.processed}/${res.total} · ${res.failed} con error · ${res.ignored.length} ignorados ✓`);
       await loadDocs();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -101,6 +102,20 @@ export default function KnowledgePage() {
           style={{ color: '#eaf2fb' }}
         />
         {msg && <p style={{ color: msg.includes('✓') ? 'var(--ok,#34d399)' : '#fbbf24', fontSize: '0.85rem' }}>{msg}</p>}
+        {lastJob && lastJob.ignored.length > 0 && (
+          <details style={{ marginTop: '0.5rem' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--muted,#7f90a3)', fontSize: '0.8rem' }}>
+              {lastJob.ignored.length} archivos ignorados (ver motivos)
+            </summary>
+            <ul style={{ fontSize: '0.78rem', color: 'var(--muted,#7f90a3)', marginTop: '0.4rem' }}>
+              {lastJob.ignored.slice(0, 50).map((ig, i) => (
+                <li key={i}>
+                  <code>{ig.path}</code> — {ig.reason}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </section>
 
       {/* Search */}

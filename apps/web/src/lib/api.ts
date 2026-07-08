@@ -26,6 +26,16 @@ export interface ChatReply {
   routingReason?: string;
   memoriesUsed?: number;
   sources?: KnowledgeSource[];
+  embeddingProvider?: string | null;
+}
+
+export interface IngestResult {
+  jobId: string;
+  total: number;
+  processed: number;
+  failed: number;
+  documents: { path: string; status: string; chunks: number }[];
+  ignored: { path: string; reason: string }[];
 }
 
 export interface KnowledgeDoc {
@@ -193,7 +203,7 @@ export const api = {
       const b = await res.json().catch(() => ({}));
       throw new Error(b?.message ?? `Error ${res.status}`);
     }
-    return res.json() as Promise<{ ingested: number; documents: { path: string; status: string; chunks: number }[] }>;
+    return res.json() as Promise<IngestResult>;
   },
   getBillingStatus: () => request<BillingStatus>('/billing/status'),
   startCheckout: () =>

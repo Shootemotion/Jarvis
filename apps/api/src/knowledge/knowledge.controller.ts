@@ -25,10 +25,16 @@ export class KnowledgeController {
     @CurrentUser() user: AuthUser,
     @UploadedFiles()
     files: { originalname: string; buffer: Buffer; mimetype: string; size: number }[],
-    @Body('projectId') projectId?: string,
+    @Body() body: { projectId?: string; excludedFolders?: string; allowListFolders?: string },
   ) {
     if (!files?.length) throw new BadRequestException('No se subió ningún archivo.');
-    return this.knowledge.ingest(user.id, files, projectId || undefined);
+    const csv = (v?: string) =>
+      v ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+    return this.knowledge.ingest(user.id, files, {
+      projectId: body.projectId || undefined,
+      excludedFolders: csv(body.excludedFolders),
+      allowListFolders: csv(body.allowListFolders),
+    });
   }
 
   @Get('documents')

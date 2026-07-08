@@ -311,6 +311,7 @@ export function JarvisShell() {
                           m.meta.memoriesUsed === 1 ? 'memoria' : 'memorias'
                         }`
                       : ''}
+                    {m.meta.embeddingProvider ? ` · emb: ${m.meta.embeddingProvider}` : ''}
                   </span>
                 )}
                 {m.meta?.sources && m.meta.sources.length > 0 && (

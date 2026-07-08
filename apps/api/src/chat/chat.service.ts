@@ -184,6 +184,25 @@ export class ChatService {
       outputTokens: reply.usage?.outputTokens,
     });
 
+    // Basic orchestrator audit (Answer Mode).
+    await this.prisma.actionLog
+      .create({
+        data: {
+          userId,
+          taskType: dto.taskType ?? 'answer',
+          provider: reply.provider,
+          model: reply.model,
+          knowledgeSources: sources.length,
+          toolsUsed: [],
+          estimatedCost,
+        },
+      })
+      .catch(() => undefined);
+
+    const embeddingProvider = this.registry.hasEmbedding()
+      ? this.config.embeddings.provider
+      : null;
+
     return {
       conversationId: conversation.id,
       messageId: saved.id,
@@ -196,6 +215,7 @@ export class ChatService {
       estimatedCost,
       memoriesUsed: memories.length,
       sources,
+      embeddingProvider,
     };
   }
 

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import matter from 'gray-matter';
 import AdmZip from 'adm-zip';
@@ -21,14 +22,33 @@ interface IncomingFile {
   size: number;
 }
 
-/** One raw markdown file resolved from an upload (single .md or a .zip entry). */
+export interface IngestOptions {
+  projectId?: string;
+  excludedFolders?: string[];
+  allowListFolders?: string[];
+}
+
 interface RawDoc {
   path: string;
   raw: string;
   bytes: number;
 }
 
+// Limits (Fase A). Ready to lift into a queue (BullMQ) later.
+const MAX_MD_BYTES = 2 * 1024 * 1024; // 2 MB per markdown file
+const MAX_TOTAL_BYTES = 60 * 1024 * 1024; // 60 MB per upload
+const MAX_FILES = 2000;
 const MAX_CHUNK_CHARS = 1400;
+
+// Always-ignored folders (privacy / noise). Extendable per-upload.
+const DEFAULT_EXCLUDED = [
+  '.obsidian/',
+  '.git/',
+  'node_modules/',
+  'attachments/',
+  'private/',
+  'secrets/',
+];
 
 @Injectable()
 export class KnowledgeService {
@@ -41,76 +61,132 @@ export class KnowledgeService {
 
   // ---- ingestion ----------------------------------------------------------
 
-  /** Ingest uploaded files: individual .md/.txt or a .zip of an Obsidian vault. */
-  async ingest(userId: string, files: IncomingFile[], projectId?: string) {
+  async ingest(userId: string, files: IncomingFile[], opts: IngestOptions = {}) {
     if (!this.registry.hasEmbedding()) {
       throw new Error(
         'No hay proveedor de embeddings configurado. Definí EMBEDDING_API_KEY (OpenAI) o EMBEDDING_PROVIDER=local.',
       );
     }
+
+    // Resolve incoming files → markdown docs, collecting what we skip and why.
     const docs: RawDoc[] = [];
+    const ignored: { path: string; reason: string }[] = [];
+    let totalBytes = 0;
+
+    const tryPush = (path: string, raw: string, bytes: number) => {
+      if (docs.length >= MAX_FILES) {
+        ignored.push({ path, reason: `límite de ${MAX_FILES} archivos` });
+        return;
+      }
+      if (bytes > MAX_MD_BYTES) {
+        ignored.push({ path, reason: 'archivo demasiado grande (>2MB)' });
+        return;
+      }
+      if (totalBytes + bytes > MAX_TOTAL_BYTES) {
+        ignored.push({ path, reason: 'límite total de subida (60MB)' });
+        return;
+      }
+      totalBytes += bytes;
+      docs.push({ path: this.normalizePath(path), raw, bytes });
+    };
+
     for (const f of files) {
-      const isZip =
-        f.mimetype.includes('zip') || f.originalname.toLowerCase().endsWith('.zip');
+      const isZip = f.mimetype.includes('zip') || /\.zip$/i.test(f.originalname);
       if (isZip) {
-        docs.push(...this.expandZip(f.buffer));
-      } else if (/\.(md|markdown|txt)$/i.test(f.originalname)) {
-        docs.push({ path: f.originalname, raw: f.buffer.toString('utf8'), bytes: f.size });
+        const expanded = this.expandZip(f.buffer, opts);
+        ignored.push(...expanded.ignored);
+        for (const d of expanded.docs) tryPush(d.path, d.raw, d.bytes);
+      } else if (/\.(md|markdown)$/i.test(f.originalname)) {
+        const reason = this.ignoreReason(f.originalname, opts);
+        if (reason) ignored.push({ path: f.originalname, reason });
+        else tryPush(f.originalname, f.buffer.toString('utf8'), f.size);
+      } else {
+        ignored.push({ path: f.originalname, reason: 'solo se aceptan .md en esta fase' });
       }
     }
 
+    // Create the ingestion job (synchronous processing; BullMQ-ready).
+    const job = await this.prisma.ingestionJob.create({
+      data: {
+        userId,
+        projectId: opts.projectId ?? null,
+        source: 'obsidian',
+        status: 'processing',
+        totalFiles: docs.length,
+      },
+    });
+
     const results: { path: string; status: string; chunks: number }[] = [];
+    let processed = 0;
+    let failed = 0;
     for (const d of docs) {
       try {
-        const doc = await this.ingestOne(userId, d, projectId);
-        results.push({ path: d.path, status: doc.status, chunks: doc.chunkCount });
+        const r = await this.ingestOne(userId, d, opts.projectId);
+        results.push(r);
+        if (r.status === 'error') failed++;
+        else processed++;
       } catch (err) {
         this.logger.error(`Ingest ${d.path}: ${String(err)}`);
         results.push({ path: d.path, status: 'error', chunks: 0 });
+        failed++;
       }
     }
-    return { ingested: results.length, documents: results };
-  }
 
-  /** Extract markdown entries from a zip, skipping .obsidian/, hidden and attachments. */
-  private expandZip(buffer: Buffer): RawDoc[] {
-    const out: RawDoc[] = [];
-    const zip = new AdmZip(buffer);
-    for (const entry of zip.getEntries()) {
-      if (entry.isDirectory) continue;
-      const name = entry.entryName;
-      if (name.includes('/.') || name.startsWith('.') || name.includes('.obsidian/')) continue;
-      if (!/\.(md|markdown)$/i.test(name)) continue;
-      const raw = entry.getData().toString('utf8');
-      out.push({ path: name, raw, bytes: raw.length });
-    }
-    return out;
-  }
-
-  private async ingestOne(userId: string, d: RawDoc, projectId?: string) {
-    const parsed = matter(d.raw);
-    const content = parsed.content;
-    const fm = parsed.data as Record<string, unknown>;
-    const tags = this.extractTags(fm, content);
-    const title = (typeof fm.title === 'string' && fm.title) || this.firstH1(content) || this.basename(d.path);
-
-    const doc = await this.prisma.document.upsert({
-      where: { userId_source_path: { userId, source: 'obsidian', path: d.path } },
-      create: {
-        userId,
-        projectId: projectId ?? null,
-        source: 'obsidian',
-        title,
-        path: d.path,
-        mime: 'text/markdown',
-        tags,
-        bytes: d.bytes,
-        status: 'indexing',
+    await this.prisma.ingestionJob.update({
+      where: { id: job.id },
+      data: {
+        status: failed > 0 && processed === 0 ? 'failed' : 'completed',
+        processedFiles: processed,
+        failedFiles: failed,
+        completedAt: new Date(),
       },
-      update: { title, tags, bytes: d.bytes, status: 'indexing', projectId: projectId ?? null },
     });
 
-    // Re-index: drop previous chunks for this document.
+    return { jobId: job.id, total: docs.length, processed, failed, documents: results, ignored };
+  }
+
+  /** Idempotent single-file ingest keyed by (userId, source, projectId, path) + contentHash. */
+  private async ingestOne(userId: string, d: RawDoc, projectId?: string) {
+    const hash = createHash('sha256').update(d.raw).digest('hex');
+
+    const existing = await this.prisma.document.findFirst({
+      where: { userId, source: 'obsidian', path: d.path, projectId: projectId ?? null },
+    });
+    // Unchanged → skip (idempotent).
+    if (existing && existing.contentHash === hash && existing.status === 'indexed') {
+      return { path: d.path, status: 'unchanged', chunks: existing.chunkCount };
+    }
+
+    const parsed = matter(d.raw);
+    const fm = parsed.data as Record<string, unknown>;
+    if (fm.private === true) {
+      return { path: d.path, status: 'skipped_private', chunks: 0 };
+    }
+    const content = parsed.content;
+    const tags = this.extractTags(fm, content);
+    const title =
+      (typeof fm.title === 'string' && fm.title) || this.firstH1(content) || this.basename(d.path);
+
+    const doc = existing
+      ? await this.prisma.document.update({
+          where: { id: existing.id },
+          data: { title, tags, bytes: d.bytes, contentHash: hash, status: 'indexing' },
+        })
+      : await this.prisma.document.create({
+          data: {
+            userId,
+            projectId: projectId ?? null,
+            source: 'obsidian',
+            title,
+            path: d.path,
+            mime: 'text/markdown',
+            tags,
+            bytes: d.bytes,
+            contentHash: hash,
+            status: 'indexing',
+          },
+        });
+
     await this.prisma.documentChunk.deleteMany({ where: { documentId: doc.id } });
 
     const parts = this.chunkMarkdown(content);
@@ -137,10 +213,61 @@ export class KnowledgeService {
       `;
     }
 
-    return this.prisma.document.update({
+    await this.prisma.document.update({
       where: { id: doc.id },
       data: { status: 'indexed', chunkCount: parts.length },
     });
+    return { path: d.path, status: 'indexed', chunks: parts.length };
+  }
+
+  /** Expand a zip into markdown docs, applying security + ignore rules. */
+  private expandZip(buffer: Buffer, opts: IngestOptions) {
+    const docs: RawDoc[] = [];
+    const ignored: { path: string; reason: string }[] = [];
+    let zip: AdmZip;
+    try {
+      zip = new AdmZip(buffer);
+    } catch {
+      return { docs, ignored: [{ path: '(zip)', reason: 'zip inválido' }] };
+    }
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory) continue;
+      const name = entry.entryName;
+      const reason = this.ignoreReason(name, opts);
+      if (reason) {
+        ignored.push({ path: name, reason });
+        continue;
+      }
+      const data = entry.getData();
+      docs.push({ path: this.normalizePath(name), raw: data.toString('utf8'), bytes: data.length });
+    }
+    return { docs, ignored };
+  }
+
+  /** Returns a reason string if the path must be ignored, or null if allowed. */
+  private ignoreReason(rawPath: string, opts: IngestOptions): string | null {
+    const p = rawPath.replace(/\\/g, '/');
+    if (p.includes('\0')) return 'path inválido';
+    if (p.startsWith('/') || /^[a-zA-Z]:/.test(p)) return 'ruta absoluta';
+    const segs = p.split('/');
+    if (segs.some((s) => s === '..')) return 'path traversal (..)';
+    if (segs.some((s) => s.startsWith('.') && s.length > 1)) return 'archivo/carpeta oculto';
+    if (!/\.(md|markdown)$/i.test(p)) return 'no es .md';
+    const lower = p.toLowerCase();
+    const excluded = [...DEFAULT_EXCLUDED, ...(opts.excludedFolders ?? [])];
+    if (excluded.some((f) => lower.includes(f.toLowerCase().replace(/\/?$/, '/')))) {
+      return 'carpeta excluida';
+    }
+    const allow = opts.allowListFolders?.filter(Boolean);
+    if (allow?.length) {
+      const ok = allow.some((f) => lower.startsWith(f.toLowerCase().replace(/\/?$/, '/')));
+      if (!ok) return 'fuera de la allow-list';
+    }
+    return null;
+  }
+
+  private normalizePath(p: string): string {
+    return p.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
   }
 
   // ---- parsing helpers ----------------------------------------------------
@@ -189,7 +316,7 @@ export class KnowledgeService {
 
   // ---- query --------------------------------------------------------------
 
-  async list(userId: string) {
+  list(userId: string) {
     return this.prisma.document.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
@@ -211,7 +338,6 @@ export class KnowledgeService {
     return { deleted: true };
   }
 
-  /** Semantic search over the user's document chunks. */
   async search(
     userId: string,
     query: string,
