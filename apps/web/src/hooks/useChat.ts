@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { api, ChatReply } from '@/lib/api';
+import { api, ChatReply, KnowledgeSource } from '@/lib/api';
 
 export interface UiMessage {
   role: 'user' | 'assistant';
@@ -14,6 +14,7 @@ export interface UiMessage {
     inputTokens?: number;
     outputTokens?: number;
     memoriesUsed?: number;
+    sources?: KnowledgeSource[];
   };
 }
 
@@ -50,6 +51,7 @@ export function useChat(projectId?: string) {
               inputTokens: res.usage?.inputTokens,
               outputTokens: res.usage?.outputTokens,
               memoriesUsed: res.memoriesUsed,
+              sources: res.sources,
             },
           },
         ]);

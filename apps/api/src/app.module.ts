@@ -11,6 +11,7 @@ import { ProvidersModule } from './providers/providers.module';
 import { HealthModule } from './health/health.module';
 import { ProjectsModule } from './projects/projects.module';
 import { MemoryModule } from './memory/memory.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
 import { ChatModule } from './chat/chat.module';
 
 @Module({
@@ -27,6 +28,7 @@ import { ChatModule } from './chat/chat.module';
     HealthModule,
     ProjectsModule,
     MemoryModule,
+    KnowledgeModule,
     ChatModule,
   ],
 })

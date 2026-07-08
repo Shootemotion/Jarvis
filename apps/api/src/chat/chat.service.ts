@@ -10,6 +10,7 @@ import type { ChatMessage } from '@jarvis/providers';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderRegistryService } from '../providers/provider-registry.service';
 import { MemoryService, MemorySearchResult } from '../memory/memory.service';
+import { KnowledgeService, KnowledgeHit } from '../knowledge/knowledge.service';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { UsageService } from '../metering/usage.service';
 import { AiSettingsService } from '../ai-settings/ai-settings.service';
@@ -31,6 +32,7 @@ export class ChatService {
     private readonly prisma: PrismaService,
     private readonly registry: ProviderRegistryService,
     private readonly memory: MemoryService,
+    private readonly knowledge: KnowledgeService,
     private readonly entitlements: EntitlementsService,
     private readonly usage: UsageService,
     private readonly aiSettings: AiSettingsService,
@@ -66,12 +68,17 @@ export class ChatService {
       },
     });
 
-    // Retrieve relevant long-term memories (best-effort; never blocks chat).
+    // Retrieve relevant long-term memories + user knowledge (best-effort).
     const memories = await this.retrieveMemories(
       userId,
       dto.message,
       conversation.projectId ?? undefined,
     );
+    const knowledgeHits = (
+      await this.knowledge
+        .search(userId, dto.message, conversation.projectId ?? undefined, MEMORY_TOP_K)
+        .catch(() => [] as KnowledgeHit[])
+    ).filter((h) => h.score >= MEMORY_MIN_SCORE);
 
     // Build the prompt: system (+ memory context) + recent history.
     const history = await this.prisma.message.findMany({
@@ -80,10 +87,17 @@ export class ChatService {
       take: MAX_HISTORY,
     });
 
-    const systemContent =
-      memories.length > 0
-        ? `${JARVIS_SYSTEM_PROMPT}\n\n${this.buildMemoryBlock(memories)}`
-        : JARVIS_SYSTEM_PROMPT;
+    const blocks = [JARVIS_SYSTEM_PROMPT];
+    if (memories.length > 0) blocks.push(this.buildMemoryBlock(memories));
+    if (knowledgeHits.length > 0) blocks.push(this.buildKnowledgeBlock(knowledgeHits));
+    const systemContent = blocks.join('\n\n');
+
+    // Citable sources (file › heading) surfaced to the client + audit metadata.
+    const sources = knowledgeHits.map((h) => ({
+      path: h.path,
+      heading: h.heading,
+      score: Math.round(h.score * 100) / 100,
+    }));
 
     const messages: ChatMessage[] = [
       { role: 'system', content: systemContent },
@@ -150,6 +164,8 @@ export class ChatService {
           usage: reply.usage ?? {},
           latencyMs: reply.latencyMs,
           plan: ent.plan,
+          source,
+          knowledgeSources: sources,
         } as unknown as Prisma.InputJsonObject,
       },
     });
@@ -179,6 +195,7 @@ export class ChatService {
       plan: ent.plan,
       estimatedCost,
       memoriesUsed: memories.length,
+      sources,
     };
   }
 
@@ -207,6 +224,13 @@ export class ChatService {
       .map((m) => `- [${m.type}] ${m.content}`)
       .join('\n');
     return `Memoria relevante del usuario (usala solo si aplica; no inventes):\n${lines}`;
+  }
+
+  private buildKnowledgeBlock(hits: KnowledgeHit[]): string {
+    const lines = hits
+      .map((h) => `- (${h.path}${h.heading ? ` › ${h.heading}` : ''})\n${h.content}`)
+      .join('\n\n');
+    return `Conocimiento del usuario (Obsidian / documentos). Usalo para responder y CITÁ la fuente (archivo › sección) cuando corresponda:\n${lines}`;
   }
 
   private async resolveConversation(userId: string, dto: ChatDto) {

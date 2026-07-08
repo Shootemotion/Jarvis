@@ -117,6 +117,11 @@ export class ProviderRegistryService {
     return !!this.embeddingProvider?.embed;
   }
 
+  /** Name of the active generation (chat) provider (premium if set, else ollama). */
+  get generationName(): string {
+    return this.premiumName ?? 'ollama';
+  }
+
   /** Generate an embedding via the dedicated embedding provider (never chat/Groq). */
   async embed(text: string): Promise<number[]> {
     const p = this.embeddingProvider;

@@ -9,6 +9,12 @@ export interface Project {
   status: string;
 }
 
+export interface KnowledgeSource {
+  path: string;
+  heading: string | null;
+  score: number;
+}
+
 export interface ChatReply {
   conversationId: string;
   messageId: string;
@@ -19,6 +25,33 @@ export interface ChatReply {
   latencyMs?: number;
   routingReason?: string;
   memoriesUsed?: number;
+  sources?: KnowledgeSource[];
+}
+
+export interface KnowledgeDoc {
+  id: string;
+  title: string;
+  path: string;
+  source: string;
+  tags: string[];
+  status: string;
+  chunkCount: number;
+  updatedAt: string;
+}
+
+export interface KnowledgeHit {
+  id: string;
+  documentId: string;
+  path: string;
+  heading: string | null;
+  content: string;
+  score: number;
+}
+
+export interface ProvidersInfo {
+  chat: { name: string };
+  embedding: { configured: boolean; provider: string; model: string; dimensions: number };
+  managedForAll: boolean;
 }
 
 export interface Memory {
@@ -135,6 +168,33 @@ export const api = {
     anthropicKey?: string;
     openaiKey?: string;
   }) => request<AiSettings>('/settings/ai', { method: 'PUT', body: JSON.stringify(body) }),
+  getProviders: () => request<ProvidersInfo>('/providers'),
+  listDocuments: () => request<KnowledgeDoc[]>('/knowledge/documents'),
+  deleteDocument: (id: string) =>
+    request<{ deleted: boolean }>(`/knowledge/documents/${id}`, { method: 'DELETE' }),
+  searchKnowledge: (body: { query: string; projectId?: string }) =>
+    request<KnowledgeHit[]>('/knowledge/search', { method: 'POST', body: JSON.stringify(body) }),
+  uploadKnowledge: async (files: File[], projectId?: string) => {
+    const form = new FormData();
+    for (const f of files) form.append('files', f);
+    if (projectId) form.append('projectId', projectId);
+    const headers: Record<string, string> = {};
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${API_URL}/api/knowledge/upload`, {
+      method: 'POST',
+      headers, // NO Content-Type → browser sets multipart boundary
+      body: form,
+    });
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      throw new Error(b?.message ?? `Error ${res.status}`);
+    }
+    return res.json() as Promise<{ ingested: number; documents: { path: string; status: string; chunks: number }[] }>;
+  },
   getBillingStatus: () => request<BillingStatus>('/billing/status'),
   startCheckout: () =>
     request<{ url: string; mock: boolean }>('/billing/checkout', { method: 'POST' }),

@@ -227,6 +227,9 @@ export function JarvisShell() {
                   ★ Mejorar a Pro
                 </button>
               )}
+              <Link href="/knowledge" className={styles.navLink}>
+                📚 Conocimiento
+              </Link>
               <Link href="/memory" className={styles.navLink}>
                 🧠 Memoria
               </Link>
@@ -308,6 +311,17 @@ export function JarvisShell() {
                           m.meta.memoriesUsed === 1 ? 'memoria' : 'memorias'
                         }`
                       : ''}
+                  </span>
+                )}
+                {m.meta?.sources && m.meta.sources.length > 0 && (
+                  <span className={styles.sources}>
+                    <span className={styles.sourcesLabel}>Fuentes:</span>
+                    {m.meta.sources.map((s, j) => (
+                      <span key={j} className={styles.sourceChip} title={`score ${s.score}`}>
+                        📄 {s.path}
+                        {s.heading ? ` › ${s.heading}` : ''}
+                      </span>
+                    ))}
                   </span>
                 )}
               </div>

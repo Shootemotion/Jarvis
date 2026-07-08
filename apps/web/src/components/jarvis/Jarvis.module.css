@@ -687,6 +687,32 @@
   margin: -0.3rem 0 0.2rem 0.2rem;
 }
 
+.sources {
+  align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: -0.1rem 0 0.3rem 0.2rem;
+  max-width: 85%;
+}
+.sourcesLabel {
+  font-family: var(--font-hud);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #8b98a5);
+}
+.sourceChip {
+  font-family: var(--font-hud);
+  font-size: 0.62rem;
+  color: var(--accent-soft, #7dd3fc);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+}
+
 .typing {
   align-self: flex-start;
   font-family: var(--font-hud);

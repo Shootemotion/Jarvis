@@ -33,6 +33,8 @@ model User {
   subscription     Subscription?
   aiSetting        AiSetting?
   payments         Payment[]
+  documents        Document[]
+  documentChunks   DocumentChunk[]
 
   @@map("users")
 }
@@ -120,6 +122,54 @@ model Payment {
   @@index([userId, createdAt])
   @@index([externalId])
   @@map("payments")
+}
+
+// Knowledge source document (Obsidian import / uploaded file). See
+// docs/MEMORY_ARCHITECTURE.md + docs/OBSIDIAN_INTEGRATION.md.
+model Document {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  projectId  String?  @map("project_id") @db.Uuid
+  source     String // 'obsidian' | 'upload'
+  title      String
+  path       String // original path within the vault, e.g. "Folder/Sub/note.md"
+  mime       String   @default("text/markdown")
+  tags       String[]
+  bytes      Int      @default(0)
+  status     String   @default("pending") // pending | indexing | indexed | error
+  chunkCount Int      @default(0) @map("chunk_count")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks DocumentChunk[]
+
+  @@unique([userId, source, path])
+  @@index([userId])
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id         String  @id @default(uuid()) @db.Uuid
+  documentId String  @map("document_id") @db.Uuid
+  userId     String  @map("user_id") @db.Uuid
+  projectId  String? @map("project_id") @db.Uuid
+  source     String
+  path       String
+  heading    String?
+  tags       String[]
+  ord        Int     @default(0)
+  content    String
+  // 768-dim embedding (managed via raw SQL, like memories).
+  embedding  Unsupported("vector(768)")?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([documentId])
+  @@map("document_chunks")
 }
 
 model Project {
