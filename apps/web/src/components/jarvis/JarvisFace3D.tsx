@@ -280,9 +280,11 @@ export function JarvisFace3D({ state, docked = false }: Props) {
       pitch += (targetPitch + basePitch + swayP - pitch) * pe;
 
       const wide = window.innerWidth > 900;
+      // Docked (chat mode): aside-left on desktop; small & tucked near the top on
+      // mobile (kept on-screen — a big tY used to fly the face off the top).
       const tX = dockedRef.current ? (wide ? -1.4 : 0) : 0;
-      const tY = dockedRef.current ? (wide ? 0.35 : 1.5) : 0;
-      const tS = dockedRef.current ? (wide ? 0.6 : 0.48) : 1;
+      const tY = dockedRef.current ? (wide ? 0.35 : 0.8) : 0;
+      const tS = dockedRef.current ? (wide ? 0.6 : 0.5) : 1;
       gx += (tX - gx) * Math.min(1, dt * 3);
       gScale += (tS - gScale) * Math.min(1, dt * 3);
       group.position.x = gx;

@@ -61,6 +61,11 @@ export class AppConfigService {
     return !!this.env.MP_ACCESS_TOKEN;
   }
 
+  /** Give everyone the managed premium LLM (cloud, no Ollama). */
+  get managedLlmForAll(): boolean {
+    return this.env.MANAGED_LLM_FOR_ALL;
+  }
+
   /**
    * Allowed CORS origins. Explicit CORS_ORIGINS list wins; otherwise localhost
    * (dev) plus the configured public web URL.

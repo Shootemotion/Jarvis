@@ -501,6 +501,129 @@
   cursor: default;
 }
 
+/* ---------- Voice / Chat mode switch ---------- */
+
+.modeSwitch {
+  display: inline-flex;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 9px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--panel, #121a24) 45%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.modeOn,
+.modeOff {
+  font-family: var(--font-hud);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.modeOff {
+  color: var(--muted, #8b98a5);
+}
+.modeOff:hover {
+  color: var(--text, #e6edf3);
+}
+.modeOn {
+  color: #041018;
+  background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+  font-weight: 700;
+}
+
+/* ---------- Voice stage (voice mode) ---------- */
+
+.voiceStage {
+  flex: 1;
+  width: 100%;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.25rem;
+  padding-bottom: clamp(2rem, 8vh, 5rem);
+  min-height: 0;
+}
+
+.voiceReply {
+  max-width: 560px;
+  text-align: center;
+  color: var(--text, #e6edf3);
+  font-size: 1.02rem;
+  line-height: 1.5;
+  margin: 0;
+  background: color-mix(in srgb, var(--panel, #121a24) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 14px;
+  padding: 0.9rem 1.1rem;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  max-height: 32vh;
+  overflow-y: auto;
+}
+
+.micBig {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  font-size: 2rem;
+  display: grid;
+  place-items: center;
+  color: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 14%, color-mix(in srgb, var(--panel, #121a24) 50%, transparent));
+  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow:
+    0 0 26px color-mix(in srgb, var(--accent) 28%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--accent) 10%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: transform 150ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.micBig:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.micBig[data-active='true'] {
+  color: #fff;
+  border-color: #f87171;
+  animation: micPulse 1.2s ease-in-out infinite;
+}
+
+.micBig:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes micPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 22px rgba(248, 113, 113, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 42px rgba(248, 113, 113, 0.75);
+  }
+}
+
+.voiceHint {
+  font-family: var(--font-hud);
+  color: var(--muted, #8b98a5);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
 /* ---------- Messages ---------- */
 
 .messages {

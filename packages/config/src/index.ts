@@ -45,6 +45,9 @@ const envSchema = z.object({
 
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  // When true, everyone (incl. Free) uses the managed premium LLM instead of
+  // Ollama. Useful in cloud where Ollama doesn't exist. Cost is bounded by quotas.
+  MANAGED_LLM_FOR_ALL: z.coerce.boolean().default(false),
   GEMINI_API_KEY: z.string().optional(),
   MISTRAL_API_KEY: z.string().optional(),
 

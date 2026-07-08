@@ -5,7 +5,7 @@ import styles from './Jarvis.module.css';
 import { JarvisAvatar } from './JarvisAvatar';
 import { JarvisStateIndicator } from './JarvisStateIndicator';
 import { JarvisCommandPanel } from './JarvisCommandPanel';
-import { JARVIS_STATE_META, JARVIS_STATES } from './types';
+import { JARVIS_STATE_META } from './types';
 import Link from 'next/link';
 import { useJarvisState } from '@/hooks/useJarvisState';
 import { useChat } from '@/hooks/useChat';
@@ -21,6 +21,9 @@ export function JarvisShell() {
   const refreshUsage = () => api.getUsage().then(setUsage).catch(() => {});
   const { messages, sending, send, reset } = useChat(projectId);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Interaction mode: voice-first by default; switch to chat for typing.
+  const [mode, setMode] = useState<'voice' | 'chat'>('voice');
 
   // Voice: STT (local Whisper) feeds the chat; TTS speaks the reply.
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -48,6 +51,7 @@ export function JarvisShell() {
   }, [messages.length, sending]);
 
   const lastMeta = [...messages].reverse().find((m) => m.meta)?.meta;
+  const lastReply = [...messages].reverse().find((m) => m.role === 'assistant')?.content;
 
   const handleSend = async (text: string) => {
     setState('thinking');
@@ -106,8 +110,8 @@ export function JarvisShell() {
   return (
     <div className={styles.shell} style={accentVar}>
       {/* Living neural field + 3D face (fixed full-viewport background).
-          Centered in voice/idle mode; docks aside once a chat is underway. */}
-      <JarvisAvatar state={state} docked={messages.length > 0} />
+          Centered in voice mode; docks aside in chat mode. */}
+      <JarvisAvatar state={state} docked={mode === 'chat'} />
 
       <header className={styles.header}>
         <div className={styles.brandWrap}>
@@ -115,6 +119,26 @@ export function JarvisShell() {
           <span className={styles.brandTag}>MVP</span>
         </div>
         <div className={styles.controls}>
+          {/* Voice / Chat mode switch */}
+          <div className={styles.modeSwitch} role="tablist" aria-label="Modo">
+            <button
+              type="button"
+              className={mode === 'voice' ? styles.modeOn : styles.modeOff}
+              onClick={() => setMode('voice')}
+              aria-selected={mode === 'voice'}
+            >
+              🎙 Voz
+            </button>
+            <button
+              type="button"
+              className={mode === 'chat' ? styles.modeOn : styles.modeOff}
+              onClick={() => setMode('chat')}
+              aria-selected={mode === 'chat'}
+            >
+              💬 Chat
+            </button>
+          </div>
+          <span className={styles.sep} />
           {me && (
             <span
               className={`${styles.navLink} ${
@@ -229,72 +253,86 @@ export function JarvisShell() {
         </span>
       )}
 
-      <span className={styles.fieldCaption}>
-        {lastMeta
-          ? `${lastMeta.provider} · ${lastMeta.model}` +
-            (lastMeta.latencyMs ? ` · ${lastMeta.latencyMs}ms` : '')
-          : 'ollama · local'}
-      </span>
+      {mode === 'chat' && (
+        <span className={styles.fieldCaption}>
+          {lastMeta
+            ? `${lastMeta.provider} · ${lastMeta.model}` +
+              (lastMeta.latencyMs ? ` · ${lastMeta.latencyMs}ms` : '')
+            : 'jarvis · online'}
+        </span>
+      )}
 
-      <div className={styles.messages} ref={scrollRef}>
-        {messages.length === 0 && !sending && (
-          <p className={styles.empty}>
-            {offline
-              ? 'Backend sin conexión. Iniciá el API para chatear.'
-              : 'Empezá la conversación con JARVIS.'}
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} style={{ display: 'contents' }}>
-            <div
-              className={`${styles.msg} ${
-                m.role === 'user' ? styles.msgUser : styles.msgAssistant
-              }`}
-            >
-              {m.content}
-            </div>
-            {m.meta && (
-              <span className={styles.msgMeta}>
-                {m.meta.provider} · {m.meta.model}
-                {m.meta.outputTokens != null && ` · ${m.meta.outputTokens} tok`}
-                {m.meta.memoriesUsed
-                  ? ` · 🧠 ${m.meta.memoriesUsed} ${
-                      m.meta.memoriesUsed === 1 ? 'memoria' : 'memorias'
-                    }`
-                  : ''}
-              </span>
+      {mode === 'chat' ? (
+        <>
+          <div className={styles.messages} ref={scrollRef}>
+            {messages.length === 0 && !sending && (
+              <p className={styles.empty}>
+                {offline
+                  ? 'Backend sin conexión. Iniciá el API para chatear.'
+                  : 'Empezá la conversación con JARVIS.'}
+              </p>
             )}
+            {messages.map((m, i) => (
+              <div key={i} style={{ display: 'contents' }}>
+                <div
+                  className={`${styles.msg} ${
+                    m.role === 'user' ? styles.msgUser : styles.msgAssistant
+                  }`}
+                >
+                  {m.content}
+                </div>
+                {m.meta && (
+                  <span className={styles.msgMeta}>
+                    {m.meta.provider} · {m.meta.model}
+                    {m.meta.outputTokens != null && ` · ${m.meta.outputTokens} tok`}
+                    {m.meta.memoriesUsed
+                      ? ` · 🧠 ${m.meta.memoriesUsed} ${
+                          m.meta.memoriesUsed === 1 ? 'memoria' : 'memorias'
+                        }`
+                      : ''}
+                  </span>
+                )}
+              </div>
+            ))}
+            {sending && <div className={styles.typing}>JARVIS está pensando…</div>}
           </div>
-        ))}
-        {sending && <div className={styles.typing}>JARVIS está pensando…</div>}
-      </div>
 
-      <JarvisCommandPanel
-        onSend={handleSend}
-        disabled={sending || offline}
-        placeholder={
-          offline ? 'Sin conexión con el backend…' : undefined
-        }
-      />
-
-      {/* Compact preview of the visual states (dev affordance). */}
-      <div className={styles.demo}>
-        <span className={styles.demoHint}>Vista previa de estados</span>
-        {JARVIS_STATES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={`${styles.demoBtn} ${
-              state === s ? styles.demoBtnActive : ''
-            }`}
-            style={{ '--accent': JARVIS_STATE_META[s].color } as CSSProperties}
-            onClick={() => setState(s)}
-            disabled={sending || (offline && s !== 'offline')}
-          >
-            {JARVIS_STATE_META[s].label}
-          </button>
-        ))}
-      </div>
+          <JarvisCommandPanel
+            onSend={handleSend}
+            disabled={sending || offline}
+            placeholder={offline ? 'Sin conexión con el backend…' : undefined}
+          />
+        </>
+      ) : (
+        <div className={styles.voiceStage}>
+          {lastReply && <p className={styles.voiceReply}>{lastReply}</p>}
+          {voice.supported ? (
+            <button
+              type="button"
+              className={styles.micBig}
+              data-active={voice.listening || undefined}
+              onClick={micToggle}
+              disabled={offline || voice.transcribing || sending}
+              aria-label={voice.listening ? 'Detener' : 'Hablar'}
+            >
+              {voice.transcribing ? '⏳' : voice.listening ? '■' : '🎤'}
+            </button>
+          ) : (
+            <p className={styles.voiceHint}>Tu navegador no soporta micrófono.</p>
+          )}
+          <span className={styles.voiceHint}>
+            {offline
+              ? 'Sin conexión con el backend…'
+              : voice.transcribing
+                ? 'Transcribiendo…'
+                : voice.listening
+                  ? 'Escuchando… tocá para terminar'
+                  : sending
+                    ? 'JARVIS está pensando…'
+                    : 'Tocá el micrófono para hablar'}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

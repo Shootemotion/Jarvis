@@ -13,6 +13,7 @@ import { MemoryService, MemorySearchResult } from '../memory/memory.service';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { UsageService } from '../metering/usage.service';
 import { AiSettingsService } from '../ai-settings/ai-settings.service';
+import { AppConfigService } from '../config/config.service';
 import { FEATURES } from '../entitlements/plans';
 import { ChatDto } from './dto';
 import { JARVIS_SYSTEM_PROMPT } from './system-prompt';
@@ -33,6 +34,7 @@ export class ChatService {
     private readonly entitlements: EntitlementsService,
     private readonly usage: UsageService,
     private readonly aiSettings: AiSettingsService,
+    private readonly config: AppConfigService,
   ) {}
 
   async chat(userId: string, dto: ChatDto) {
@@ -47,7 +49,10 @@ export class ChatService {
         );
       }
     }
-    const allowPremium = ent.features.includes(FEATURES.PREMIUM_LLM);
+    // Managed premium when the plan unlocks it, or when the deployment forces it
+    // for everyone (cloud without Ollama).
+    const allowPremium =
+      ent.features.includes(FEATURES.PREMIUM_LLM) || this.config.managedLlmForAll;
 
     const conversation = await this.resolveConversation(userId, dto);
 
@@ -110,7 +115,16 @@ export class ChatService {
         break;
       }
     }
-    if (!provider) provider = this.registry.getProvider('ollama');
+    if (!provider) {
+      // No BYO/managed provider resolved. In a managed-only deployment (cloud,
+      // no Ollama) this means the server premium key is missing — say so clearly.
+      if (this.config.managedLlmForAll && !this.registry.hasPremium()) {
+        throw new ServiceUnavailableException(
+          'No hay un modelo premium configurado en el servidor. Falta OPENAI_API_KEY (o ANTHROPIC_API_KEY).',
+        );
+      }
+      provider = this.registry.getProvider('ollama');
+    }
     this.logger.log(`chat -> provider=${provider.name} (plan=${ent.plan}, source=${source})`);
 
     let reply;
