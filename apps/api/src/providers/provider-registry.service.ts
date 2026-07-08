@@ -36,12 +36,16 @@ export class ProviderRegistryService {
         'openai',
         new OpenAIProvider({
           apiKey: openaiKey,
+          // Optional OpenAI-compatible endpoint (Groq/OpenRouter/…) + model.
+          baseUrl: this.config.env.OPENAI_BASE_URL,
+          defaultModel: this.config.env.OPENAI_DEFAULT_MODEL,
           embeddingModel: emb.model,
           embeddingDimensions: emb.dimensions,
         }),
       );
       if (!this.premiumName) this.premiumName = 'openai';
-      this.logger.log('OpenAI provider enabled.');
+      const where = this.config.env.OPENAI_BASE_URL ?? 'api.openai.com';
+      this.logger.log(`OpenAI-compatible provider enabled (${where}).`);
     }
   }
 

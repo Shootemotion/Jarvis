@@ -45,6 +45,11 @@ const envSchema = z.object({
 
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  // OpenAI-compatible endpoints (Groq, OpenRouter, Together, local, …). Point
+  // OPENAI_BASE_URL at the provider and set OPENAI_DEFAULT_MODEL to test for free.
+  // e.g. Groq: https://api.groq.com/openai/v1 + llama-3.3-70b-versatile
+  OPENAI_BASE_URL: z.string().optional(),
+  OPENAI_DEFAULT_MODEL: z.string().optional(),
   // When true, everyone (incl. Free) uses the managed premium LLM instead of
   // Ollama. Useful in cloud where Ollama doesn't exist. Cost is bounded by quotas.
   MANAGED_LLM_FOR_ALL: z.coerce.boolean().default(false),

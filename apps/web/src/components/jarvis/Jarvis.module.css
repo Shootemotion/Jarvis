@@ -549,7 +549,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 1.25rem;
-  padding-bottom: clamp(2rem, 8vh, 5rem);
+  padding-bottom: clamp(0.75rem, 2.5vh, 1.75rem);
   min-height: 0;
 }
 
