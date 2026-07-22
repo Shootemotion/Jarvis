@@ -31,7 +31,10 @@ export function useChat(projectId?: string) {
   const [sending, setSending] = useState(false);
 
   const send = useCallback(
-    async (text: string): Promise<ChatReply> => {
+    async (
+      text: string,
+      opts?: { onSentence?: (s: string) => void },
+    ): Promise<ChatReply> => {
       setSending(true);
       // Append the user message + an empty assistant bubble to fill as tokens stream.
       setMessages((prev) => [
@@ -42,6 +45,7 @@ export function useChat(projectId?: string) {
 
       let full = '';
       let meta: ChatReply | null = null;
+      let sentenceBuf = '';
       const patchLast = (patch: Partial<UiMessage>) =>
         setMessages((prev) => {
           const c = prev.slice();
@@ -57,6 +61,18 @@ export function useChat(projectId?: string) {
             onDelta: (d) => {
               full += d;
               patchLast({ content: full });
+              // Emit complete sentences as they form (so TTS can speak while streaming).
+              if (opts?.onSentence) {
+                sentenceBuf += d;
+                const parts = sentenceBuf.split(/(?<=[.!?…\n])\s+/);
+                if (parts.length > 1) {
+                  for (let i = 0; i < parts.length - 1; i++) {
+                    const s = parts[i].trim();
+                    if (s) opts.onSentence(s);
+                  }
+                  sentenceBuf = parts[parts.length - 1];
+                }
+              }
             },
             onMeta: (m) => {
               meta = m;
@@ -64,6 +80,8 @@ export function useChat(projectId?: string) {
             },
           },
         );
+        const tail = sentenceBuf.trim();
+        if (tail && opts?.onSentence) opts.onSentence(tail);
       } catch (err) {
         // Drop the empty placeholder if nothing streamed, then surface the error.
         setMessages((prev) => {

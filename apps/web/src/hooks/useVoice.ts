@@ -68,6 +68,10 @@ export function useVoice({ onTranscript }: Options) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const premiumRef = useRef(false);
   const voiceURIRef = useRef('');
+  // Sentence queue (speak while the reply streams).
+  const queueRef = useRef<string[]>([]);
+  const playingRef = useRef(false);
+  const batchHooksRef = useRef<{ onStart?: () => void; onEnd?: () => void } | undefined>(undefined);
 
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -420,7 +424,70 @@ export function useVoice({ onTranscript }: Options) {
     [browserSpeak, pauseAmbient, resumeAmbient],
   );
 
+  // Play a single chunk to completion (premium mp3 or browser voice, no cancel).
+  const playOne = useCallback(
+    (text: string) =>
+      new Promise<void>((done) => {
+        const browserOnce = () => {
+          if (typeof window === 'undefined' || !window.speechSynthesis) return done();
+          const u = new SpeechSynthesisUtterance(text);
+          const all = window.speechSynthesis.getVoices();
+          const chosen =
+            all.find((v) => v.voiceURI === voiceURIRef.current) ||
+            all.find((v) => v.lang?.toLowerCase().startsWith('es'));
+          if (chosen) u.voice = chosen;
+          u.lang = chosen?.lang || 'es-ES';
+          u.onend = () => done();
+          u.onerror = () => done();
+          window.speechSynthesis.speak(u);
+        };
+        if (premiumRef.current) {
+          api
+            .synthesizeSpeech(text, voiceURIRef.current)
+            .then((url) => {
+              const audio = new Audio(url);
+              audioRef.current = audio;
+              const fin = () => { URL.revokeObjectURL(url); audioRef.current = null; done(); };
+              audio.onended = fin;
+              audio.onerror = fin;
+              audio.play().catch(fin);
+            })
+            .catch(browserOnce);
+        } else {
+          browserOnce();
+        }
+      }),
+    [],
+  );
+
+  /** Enqueue a sentence; the queue plays sequentially (used while streaming). */
+  const speakChunk = useCallback(
+    (text: string, hooks?: { onStart?: () => void; onEnd?: () => void }) => {
+      if (!text?.trim()) return;
+      if (!playingRef.current) batchHooksRef.current = hooks;
+      queueRef.current.push(text.trim());
+      if (playingRef.current) return;
+      playingRef.current = true;
+      setSpeaking(true);
+      pauseAmbient();
+      batchHooksRef.current?.onStart?.();
+      (async () => {
+        while (queueRef.current.length) {
+          const next = queueRef.current.shift();
+          if (next) await playOne(next);
+        }
+        playingRef.current = false;
+        setSpeaking(false);
+        resumeAmbient();
+        batchHooksRef.current?.onEnd?.();
+      })();
+    },
+    [playOne, pauseAmbient, resumeAmbient],
+  );
+
   const stopSpeaking = useCallback(() => {
+    queueRef.current = [];
+    playingRef.current = false;
     try {
       audioRef.current?.pause();
     } catch { /* noop */ }
@@ -448,6 +515,7 @@ export function useVoice({ onTranscript }: Options) {
     startHandsFree,
     stopHandsFree,
     speak,
+    speakChunk,
     stopSpeaking,
   };
 }

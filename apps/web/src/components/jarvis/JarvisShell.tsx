@@ -79,19 +79,24 @@ export function JarvisShell() {
 
   const handleSend = async (text: string) => {
     setState('thinking');
+    voice.stopSpeaking(); // clear any prior speech before a new turn
     try {
-      const res = await send(text);
+      await send(text, {
+        onSentence: (s) => {
+          if (voiceEnabled)
+            voice.speakChunk(s, {
+              onStart: () => setState('speaking'),
+              onEnd: () => setState('idle'),
+            });
+        },
+      });
       refreshUsage();
-      if (voiceEnabled && res?.reply?.content) {
-        voice.speak(res.reply.content, {
-          onStart: () => setState('speaking'),
-          onEnd: () => setState('idle'),
-        });
-        // fallback in case speech synthesis never fires (no voices)
+      if (!voiceEnabled) {
         setState('speaking');
+        setTimeout(() => setState('idle'), 1200);
       } else {
-        setState('speaking');
-        setTimeout(() => setState('idle'), 1400);
+        // If nothing was queued to speak, don't leave it stuck on "thinking".
+        setTimeout(() => setState((s) => (s === 'thinking' ? 'idle' : s)), 700);
       }
     } catch (err) {
       console.error(err);

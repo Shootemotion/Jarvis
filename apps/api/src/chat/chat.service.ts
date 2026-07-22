@@ -255,6 +255,10 @@ export class ChatService {
   /** Persist reply, meter, audit, learn — and build the response payload. */
   private async finalize(userId: string, dto: ChatDto, ctx: ChatContext, reply: FinalReply) {
     const { conversation, entPlan, plan, sources, source } = ctx;
+    // Friendlier label: an OpenAI-compatible endpoint running Llama/Mixtral is Groq.
+    const providerLabel = /llama|mixtral|gemma|qwen/i.test(reply.model || '')
+      ? 'groq'
+      : reply.provider;
     const saved = await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
@@ -262,7 +266,7 @@ export class ChatService {
         role: 'assistant',
         content: reply.content,
         metadata: {
-          provider: reply.provider,
+          provider: providerLabel,
           model: reply.model,
           usage: reply.usage ?? {},
           latencyMs: reply.latencyMs,
@@ -316,7 +320,7 @@ export class ChatService {
       conversationId: conversation.id,
       messageId: saved.id,
       reply: { role: 'assistant' as const, content: reply.content },
-      provider: reply.provider,
+      provider: providerLabel,
       model: reply.model,
       usage: reply.usage,
       latencyMs: reply.latencyMs,
