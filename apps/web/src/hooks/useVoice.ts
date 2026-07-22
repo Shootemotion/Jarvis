@@ -25,6 +25,11 @@ interface Options {
 
 export type VoiceModelStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+// Wake word (+ common mis-hearings) and how long JARVIS stays "awake" for
+// follow-ups without repeating the name.
+const WAKE = /\b(jarvis|yarvis|llarvis|jarbis|jervis|charvis|yarbis)\b/i;
+const AWAKE_WINDOW_MS = 15000;
+
 /** Native Web Speech API constructor (Chrome/Edge/Safari), if present. */
 function getSpeechRecognition(): (new () => any) | null {
   if (typeof window === 'undefined') return null;
@@ -48,6 +53,16 @@ export function useVoice({ onTranscript }: Options) {
   const recognitionRef = useRef<any>(null);
   const nativeSTTRef = useRef(false);
   const finalTextRef = useRef('');
+  // Stable reference to the latest onTranscript (avoids stale closures).
+  const onTranscriptRef = useRef(onTranscript);
+  onTranscriptRef.current = onTranscript;
+  // Hands-free / wake-word ("Jarvis, …") continuous listening.
+  const ambientRef = useRef<any>(null);
+  const handsFreeRef = useRef(false);
+  const awakeRef = useRef(false);
+  const awakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speakingRef = useRef(false);
 
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -55,6 +70,8 @@ export function useVoice({ onTranscript }: Options) {
   const [modelStatus, setModelStatus] = useState<VoiceModelStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [speaking, setSpeaking] = useState(false);
+  const [handsFree, setHandsFreeState] = useState(false);
+  const [awake, setAwakeUi] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceURI, setVoiceURI] = useState<string>('');
 
@@ -136,6 +153,8 @@ export function useVoice({ onTranscript }: Options) {
 
   const startListening = useCallback(async () => {
     if (listening || transcribing) return;
+    // Hands-free owns the mic while active; don't open a second recognizer.
+    if (handsFreeRef.current) return;
 
     // Native real-time path.
     if (nativeSTTRef.current) {
@@ -221,6 +240,97 @@ export function useVoice({ onTranscript }: Options) {
     setListening(false);
   }, []);
 
+  // ---- hands-free / wake word ----------------------------------------------
+
+  const setAwake = useCallback((v: boolean) => {
+    awakeRef.current = v;
+    setAwakeUi(v);
+  }, []);
+
+  const refreshAwake = useCallback(() => {
+    if (awakeTimerRef.current) clearTimeout(awakeTimerRef.current);
+    awakeTimerRef.current = setTimeout(() => setAwake(false), AWAKE_WINDOW_MS);
+  }, [setAwake]);
+
+  const startAmbient = useCallback(() => {
+    const SR = getSpeechRecognition();
+    if (!SR || ambientRef.current) return;
+    const rec = new SR();
+    rec.lang = 'es-AR';
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+
+    const deliver = (text: string) => {
+      const t = text.trim();
+      if (t.length < 2) return;
+      setAwake(true);
+      refreshAwake();
+      onTranscriptRef.current(t);
+    };
+
+    rec.onresult = (ev: any) => {
+      if (speakingRef.current) return; // ignore our own TTS
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const res = ev.results[i];
+        const text: string = res[0].transcript;
+        if (!res.isFinal) {
+          if (!awakeRef.current && WAKE.test(text)) setAwake(true); // instant feedback
+          continue;
+        }
+        if (awakeRef.current) {
+          // Follow-up: no wake word needed (strip it if the user said it anyway).
+          deliver(text.replace(WAKE, '').replace(/^[\s,.:!¡]+/, '') || text);
+        } else if (WAKE.test(text)) {
+          const after = text.slice(text.toLowerCase().search(WAKE)).replace(WAKE, '').replace(/^[\s,.:!¡]+/, '');
+          setAwake(true);
+          refreshAwake();
+          if (after.trim().length >= 2) deliver(after);
+        }
+      }
+    };
+    rec.onerror = (ev: any) => {
+      if (ev.error !== 'no-speech' && ev.error !== 'aborted') console.error('wake:', ev.error);
+    };
+    rec.onend = () => {
+      ambientRef.current = null;
+      // Chrome ends recognition periodically — keep it alive while hands-free.
+      if (handsFreeRef.current && !speakingRef.current) {
+        restartRef.current = setTimeout(() => startAmbient(), 250);
+      }
+    };
+    ambientRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      /* already running */
+    }
+  }, [refreshAwake, setAwake]);
+
+  const startHandsFree = useCallback(() => {
+    if (!getSpeechRecognition()) return;
+    handsFreeRef.current = true;
+    setHandsFreeState(true);
+    startAmbient();
+  }, [startAmbient]);
+
+  const stopHandsFree = useCallback(() => {
+    handsFreeRef.current = false;
+    setHandsFreeState(false);
+    setAwake(false);
+    if (awakeTimerRef.current) clearTimeout(awakeTimerRef.current);
+    if (restartRef.current) clearTimeout(restartRef.current);
+    try {
+      ambientRef.current?.abort();
+    } catch {
+      /* noop */
+    }
+    ambientRef.current = null;
+  }, [setAwake]);
+
+  // Stop hands-free on unmount.
+  useEffect(() => () => stopHandsFree(), [stopHandsFree]);
+
   const speak = useCallback(
     (text: string, hooks?: { onStart?: () => void; onEnd?: () => void }) => {
       if (typeof window === 'undefined' || !window.speechSynthesis) return;
@@ -232,12 +342,28 @@ export function useVoice({ onTranscript }: Options) {
       u.lang = chosen?.lang || 'es-ES';
       u.rate = 1.0;
       u.pitch = 1.0;
-      u.onstart = () => { setSpeaking(true); hooks?.onStart?.(); };
-      u.onend = () => { setSpeaking(false); hooks?.onEnd?.(); };
-      u.onerror = () => { setSpeaking(false); hooks?.onEnd?.(); };
+      u.onstart = () => {
+        setSpeaking(true);
+        // Pause ambient listening so JARVIS doesn't transcribe its own voice.
+        if (handsFreeRef.current) {
+          speakingRef.current = true;
+          try { ambientRef.current?.abort(); } catch { /* noop */ }
+        }
+        hooks?.onStart?.();
+      };
+      const resume = () => {
+        setSpeaking(false);
+        if (handsFreeRef.current) {
+          speakingRef.current = false;
+          restartRef.current = setTimeout(() => startAmbient(), 400);
+        }
+        hooks?.onEnd?.();
+      };
+      u.onend = resume;
+      u.onerror = resume;
       window.speechSynthesis.speak(u);
     },
-    [voiceURI],
+    [voiceURI, startAmbient],
   );
 
   const stopSpeaking = useCallback(() => {
@@ -245,5 +371,23 @@ export function useVoice({ onTranscript }: Options) {
     setSpeaking(false);
   }, []);
 
-  return { supported, listening, transcribing, modelStatus, progress, speaking, voices, voiceURI, setVoiceURI, startListening, stopListening, speak, stopSpeaking };
+  return {
+    supported,
+    listening,
+    transcribing,
+    modelStatus,
+    progress,
+    speaking,
+    handsFree,
+    awake,
+    voices,
+    voiceURI,
+    setVoiceURI,
+    startListening,
+    stopListening,
+    startHandsFree,
+    stopHandsFree,
+    speak,
+    stopSpeaking,
+  };
 }

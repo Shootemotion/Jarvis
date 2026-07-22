@@ -54,6 +54,13 @@ export function JarvisShell() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages.length, sending]);
 
+  // Reflect the hands-free "awake" state on the avatar (listening ↔ idle).
+  useEffect(() => {
+    if (voice.awake) setState('listening');
+    else setState((s) => (s === 'listening' ? 'idle' : s));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voice.awake]);
+
   const lastMeta = [...messages].reverse().find((m) => m.meta)?.meta;
 
   const handleSend = async (text: string) => {
@@ -157,6 +164,24 @@ export function JarvisShell() {
           >
             {cameraMode === 'off' ? '📷 Cámara' : cameraMode === 'follow' ? '👁 Seguir' : '🪞 Reflejo'}
           </button>
+          {voice.supported && (
+            <button
+              type="button"
+              className={styles.navLink}
+              onClick={() => (voice.handsFree ? voice.stopHandsFree() : voice.startHandsFree())}
+              title={'Manos libres — decí "Jarvis…" y quedo atento'}
+              style={
+                voice.handsFree
+                  ? {
+                      color: voice.awake ? '#34d399' : 'var(--accent)',
+                      borderColor: voice.awake ? '#34d399' : 'var(--accent)',
+                    }
+                  : undefined
+              }
+            >
+              {voice.handsFree ? (voice.awake ? '👂 Atento' : '👂 Jarvis') : '👂'}
+            </button>
+          )}
           <button
             type="button"
             className={styles.navLink}
@@ -346,12 +371,12 @@ export function JarvisShell() {
             <button
               type="button"
               className={styles.micBig}
-              data-active={voice.listening || undefined}
-              onClick={micToggle}
+              data-active={voice.listening || voice.awake || undefined}
+              onClick={() => (voice.handsFree ? voice.stopHandsFree() : micToggle())}
               disabled={offline || voice.transcribing || sending}
-              aria-label={voice.listening ? 'Detener' : 'Hablar'}
+              aria-label={voice.handsFree ? 'Desactivar manos libres' : voice.listening ? 'Detener' : 'Hablar'}
             >
-              {voice.transcribing ? '⏳' : voice.listening ? '■' : '🎤'}
+              {voice.transcribing ? '⏳' : voice.awake ? '👂' : voice.listening ? '■' : voice.handsFree ? '👂' : '🎤'}
             </button>
           ) : (
             <p className={styles.voiceHint}>Tu navegador no soporta micrófono.</p>
@@ -361,11 +386,15 @@ export function JarvisShell() {
               ? 'Sin conexión con el backend…'
               : voice.transcribing
                 ? 'Transcribiendo…'
-                : voice.listening
-                  ? 'Escuchando… tocá para terminar'
-                  : sending
-                    ? 'JARVIS está pensando…'
-                    : 'Tocá el micrófono para hablar'}
+                : sending
+                  ? 'JARVIS está pensando…'
+                  : voice.awake
+                    ? 'Te escucho… hablá'
+                    : voice.handsFree
+                      ? 'Manos libres activo — decí "Jarvis…"'
+                      : voice.listening
+                        ? 'Escuchando… tocá para terminar'
+                        : 'Tocá el micrófono, o activá 👂 manos libres'}
           </span>
         </div>
       )}
