@@ -25,6 +25,11 @@ interface Props {
 
 const BG_COLOR = 0x04060a;
 
+// Avatar model: a Ready Player Me bust (neck/shoulders + ARKit morphs) when
+// NEXT_PUBLIC_AVATAR_URL is set; otherwise the built-in facecap head.
+const AVATAR_URL = process.env.NEXT_PUBLIC_AVATAR_URL || '/facecap.glb';
+const BUST = AVATAR_URL !== '/facecap.glb';
+
 const MP_VERSION = '0.10.35';
 const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
 const MP_MODEL =
@@ -205,7 +210,25 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     const loader = new GLTFLoader();
     loader.setKTX2Loader(ktx2);
     loader.setMeshoptDecoder(MeshoptDecoder);
-    loader.load('/facecap.glb', (gltf) => {
+    // Bottom-fade shader (bust mode): dissolve the lower body into the background.
+    const addBottomFade = (mat: THREE.MeshBasicMaterial) => {
+      mat.onBeforeCompile = (shader) => {
+        shader.vertexShader =
+          'varying float vFadeY;\n' +
+          shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            '#include <begin_vertex>\n  vFadeY = position.y;',
+          );
+        shader.fragmentShader =
+          'varying float vFadeY;\n' +
+          shader.fragmentShader.replace(
+            '#include <dithering_fragment>',
+            '#include <dithering_fragment>\n  gl_FragColor.a *= smoothstep(-0.85, 0.05, vFadeY);',
+          );
+      };
+    };
+
+    loader.load(AVATAR_URL, (gltf) => {
       if (disposed) return;
       const root = gltf.scene;
       const meshes: THREE.Mesh[] = [];
@@ -213,34 +236,42 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         const m = o as THREE.Mesh;
         if (m.isMesh) meshes.push(m);
       });
-      // The face is the mesh with the most morph targets (blendshapes). Everything
-      // else (eyeballs, teeth) is hidden — as wireframe they read as creepy orbs.
+      // The face is the mesh with the most morph targets (blendshapes).
       let face: THREE.Mesh | null = null;
       for (const m of meshes) {
         const n = m.morphTargetInfluences?.length ?? 0;
         if (!face || n > (face.morphTargetInfluences?.length ?? 0)) face = m;
       }
+
+      const makeHolo = () => {
+        const holo = new THREE.MeshBasicMaterial({
+          color: accent.clone(),
+          wireframe: true,
+          transparent: true,
+          opacity: 0.4,
+          depthWrite: false,
+          fog: true,
+        });
+        if (BUST) addBottomFade(holo);
+        headMats.push(holo);
+        return holo;
+      };
+
       for (const m of meshes) {
+        const name = (m.name || '').toLowerCase();
+        const isEye = /eye/.test(name) && !/brow|lash|glass/.test(name);
+        const isMouthPart = /teeth|tooth|tongue|mouthinterior/.test(name);
+
         if (m === face && m.morphTargetDictionary) {
-          const holo = new THREE.MeshBasicMaterial({
-            color: accent.clone(),
-            wireframe: true,
-            transparent: true,
-            opacity: 0.38,
-            depthWrite: false,
-            fog: true,
-          });
+          const holo = makeHolo();
           m.material = holo;
-          headMats.push(holo);
           headMesh = m;
           const d = m.morphTargetDictionary as Record<string, number>;
           mIdxBlinkL = morphIndex(d, 'eyeBlinkLeft', 'eyeBlink_L', 'blink_L');
           mIdxBlinkR = morphIndex(d, 'eyeBlinkRight', 'eyeBlink_R', 'blink_R');
           mIdxJaw = morphIndex(d, 'jawOpen', 'mouthOpen');
           mIdxMouth = morphIndex(d, 'mouthOpen');
-
-          // Solid bg-colored occluder (shares geometry + morphs) so the interior
-          // — teeth, mouth cavity, back of head — is hidden behind the surface.
+          // Solid bg-colored occluder so the interior/back isn't visible through the wire.
           const fillMat = new THREE.MeshBasicMaterial({
             color: BG_COLOR,
             polygonOffset: true,
@@ -248,10 +279,21 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
             polygonOffsetUnits: 1,
           });
           const fill = new THREE.Mesh(m.geometry, fillMat);
-          fill.morphTargetInfluences = m.morphTargetInfluences; // same array → in sync
+          fill.morphTargetInfluences = m.morphTargetInfluences;
           fill.morphTargetDictionary = m.morphTargetDictionary;
           fill.renderOrder = -1;
           m.add(fill);
+        } else if (BUST && isEye) {
+          // Glowing eyes (solid, not wireframe) — no empty sockets.
+          const eyeMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0xbfefff),
+            transparent: true,
+            opacity: 0.9,
+          });
+          m.material = eyeMat;
+        } else if (BUST && !isMouthPart) {
+          // Neck, shoulders, hair, body → holographic wireframe.
+          m.material = makeHolo();
         } else {
           m.visible = false;
         }
@@ -262,8 +304,17 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
       const center = new THREE.Vector3();
       box.getSize(size);
       box.getCenter(center);
-      root.position.sub(center);
-      const scl = 2.0 / size.y;
+
+      let scl: number;
+      if (BUST) {
+        // Frame roughly the top third (head + shoulders); lower body fades out.
+        const span = size.y * 0.34;
+        root.position.set(-center.x, -(box.max.y - span / 2), -center.z);
+        scl = 2.0 / span;
+      } else {
+        root.position.sub(center);
+        scl = 2.0 / size.y;
+      }
 
       headHolder = new THREE.Group();
       headHolder.add(root);
