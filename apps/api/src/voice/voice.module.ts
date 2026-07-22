@@ -1,0 +1,11 @@
+import { Module } from '@nestjs/common';
+import { VoiceService } from './voice.service';
+import { VoiceController } from './voice.controller';
+
+// EntitlementsService + AppConfigService are @Global.
+@Module({
+  controllers: [VoiceController],
+  providers: [VoiceService],
+  exports: [VoiceService],
+})
+export class VoiceModule {}

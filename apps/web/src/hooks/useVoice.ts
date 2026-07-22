@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/api';
 
 /** Decode a recorded blob to mono Float32 @ 16 kHz (what Whisper expects). */
 async function blobToFloat32Mono16k(blob: Blob): Promise<Float32Array> {
@@ -63,6 +64,10 @@ export function useVoice({ onTranscript }: Options) {
   const awakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restartRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speakingRef = useRef(false);
+  // Premium neural voice (server-side OpenAI TTS).
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const premiumRef = useRef(false);
+  const voiceURIRef = useRef('');
 
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
@@ -74,6 +79,24 @@ export function useVoice({ onTranscript }: Options) {
   const [awake, setAwakeUi] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceURI, setVoiceURI] = useState<string>('');
+  const [premium, setPremium] = useState(false);
+  const [premiumVoices, setPremiumVoices] = useState<string[]>([]);
+  premiumRef.current = premium;
+  voiceURIRef.current = voiceURI;
+
+  // Detect premium neural voice availability (server-side TTS).
+  useEffect(() => {
+    api
+      .getVoiceConfig()
+      .then((cfg) => {
+        if (cfg.available) {
+          setPremium(true);
+          setPremiumVoices(cfg.voices);
+          setVoiceURI(cfg.voice || cfg.voices[0] || '');
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Load the OS/browser voices and auto-pick the best Spanish one.
   useEffect(() => {
@@ -94,7 +117,7 @@ export function useVoice({ onTranscript }: Options) {
       const es = all.filter((v) => v.lang?.toLowerCase().startsWith('es')).sort((a, b) => rank(b) - rank(a));
       const list = es.length ? es : all;
       setVoices(list);
-      setVoiceURI((cur) => cur || list[0]?.voiceURI || '');
+      setVoiceURI((cur) => (premiumRef.current ? cur : cur || list[0]?.voiceURI || ''));
     };
     load();
     window.speechSynthesis.onvoiceschanged = load;
@@ -331,42 +354,77 @@ export function useVoice({ onTranscript }: Options) {
   // Stop hands-free on unmount.
   useEffect(() => () => stopHandsFree(), [stopHandsFree]);
 
-  const speak = useCallback(
+  const pauseAmbient = useCallback(() => {
+    if (handsFreeRef.current) {
+      speakingRef.current = true;
+      try { ambientRef.current?.abort(); } catch { /* noop */ }
+    }
+  }, []);
+  const resumeAmbient = useCallback(() => {
+    if (handsFreeRef.current) {
+      speakingRef.current = false;
+      restartRef.current = setTimeout(() => startAmbient(), 400);
+    }
+  }, [startAmbient]);
+
+  const browserSpeak = useCallback(
     (text: string, hooks?: { onStart?: () => void; onEnd?: () => void }) => {
       if (typeof window === 'undefined' || !window.speechSynthesis) return;
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       const all = window.speechSynthesis.getVoices();
-      const chosen = all.find((v) => v.voiceURI === voiceURI) || all.find((v) => v.lang?.toLowerCase().startsWith('es'));
+      const chosen = all.find((v) => v.voiceURI === voiceURIRef.current) || all.find((v) => v.lang?.toLowerCase().startsWith('es'));
       if (chosen) u.voice = chosen;
       u.lang = chosen?.lang || 'es-ES';
-      u.rate = 1.0;
-      u.pitch = 1.0;
-      u.onstart = () => {
-        setSpeaking(true);
-        // Pause ambient listening so JARVIS doesn't transcribe its own voice.
-        if (handsFreeRef.current) {
-          speakingRef.current = true;
-          try { ambientRef.current?.abort(); } catch { /* noop */ }
-        }
-        hooks?.onStart?.();
-      };
-      const resume = () => {
-        setSpeaking(false);
-        if (handsFreeRef.current) {
-          speakingRef.current = false;
-          restartRef.current = setTimeout(() => startAmbient(), 400);
-        }
-        hooks?.onEnd?.();
-      };
+      u.onstart = () => { setSpeaking(true); pauseAmbient(); hooks?.onStart?.(); };
+      const resume = () => { setSpeaking(false); resumeAmbient(); hooks?.onEnd?.(); };
       u.onend = resume;
       u.onerror = resume;
       window.speechSynthesis.speak(u);
     },
-    [voiceURI, startAmbient],
+    [pauseAmbient, resumeAmbient],
+  );
+
+  const speak = useCallback(
+    (text: string, hooks?: { onStart?: () => void; onEnd?: () => void }) => {
+      if (!text?.trim()) return;
+      // Stop anything currently playing.
+      try { audioRef.current?.pause(); } catch { /* noop */ }
+      audioRef.current = null;
+      window.speechSynthesis?.cancel();
+
+      // Premium neural voice (server TTS) with graceful fallback to the browser.
+      if (premiumRef.current) {
+        api
+          .synthesizeSpeech(text, voiceURIRef.current)
+          .then((url) => {
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            audio.onplay = () => { setSpeaking(true); pauseAmbient(); hooks?.onStart?.(); };
+            const done = () => {
+              setSpeaking(false);
+              resumeAmbient();
+              hooks?.onEnd?.();
+              URL.revokeObjectURL(url);
+              audioRef.current = null;
+            };
+            audio.onended = done;
+            audio.onerror = done;
+            audio.play().catch(done);
+          })
+          .catch(() => browserSpeak(text, hooks)); // server unavailable → browser voice
+        return;
+      }
+      browserSpeak(text, hooks);
+    },
+    [browserSpeak, pauseAmbient, resumeAmbient],
   );
 
   const stopSpeaking = useCallback(() => {
+    try {
+      audioRef.current?.pause();
+    } catch { /* noop */ }
+    audioRef.current = null;
     window.speechSynthesis?.cancel();
     setSpeaking(false);
   }, []);
@@ -380,6 +438,8 @@ export function useVoice({ onTranscript }: Options) {
     speaking,
     handsFree,
     awake,
+    premium,
+    premiumVoices,
     voices,
     voiceURI,
     setVoiceURI,

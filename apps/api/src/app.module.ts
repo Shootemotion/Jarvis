@@ -13,6 +13,7 @@ import { ProjectsModule } from './projects/projects.module';
 import { MemoryModule } from './memory/memory.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { OrchestratorModule } from './orchestrator/orchestrator.module';
+import { VoiceModule } from './voice/voice.module';
 import { ChatModule } from './chat/chat.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { ChatModule } from './chat/chat.module';
     MemoryModule,
     KnowledgeModule,
     OrchestratorModule,
+    VoiceModule,
     ChatModule,
   ],
 })

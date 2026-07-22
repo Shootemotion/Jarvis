@@ -194,7 +194,7 @@ export function JarvisShell() {
           >
             {voiceEnabled ? '🔊' : '🔇'}
           </button>
-          {voice.voices.length > 1 && (
+          {voice.premium ? (
             <select
               className={styles.select}
               value={voice.voiceURI}
@@ -202,15 +202,34 @@ export function JarvisShell() {
                 voice.setVoiceURI(e.target.value);
                 voice.speak('Hola, soy JARVIS.');
               }}
-              aria-label="Voz"
-              title="Elegí la voz de JARVIS"
+              aria-label="Voz neuronal"
+              title="Voz neuronal (Pro)"
             >
-              {voice.voices.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI}>
-                  {v.name}
+              {voice.premiumVoices.map((v) => (
+                <option key={v} value={v}>
+                  🎙 {v}
                 </option>
               ))}
             </select>
+          ) : (
+            voice.voices.length > 1 && (
+              <select
+                className={styles.select}
+                value={voice.voiceURI}
+                onChange={(e) => {
+                  voice.setVoiceURI(e.target.value);
+                  voice.speak('Hola, soy JARVIS.');
+                }}
+                aria-label="Voz"
+                title="Elegí la voz de JARVIS"
+              >
+                {voice.voices.map((v) => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            )
           )}
           <Link href="/settings/ai" className={styles.navLink} title="Ajustes">
             ⚙️

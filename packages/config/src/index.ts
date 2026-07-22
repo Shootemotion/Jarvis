@@ -66,6 +66,11 @@ const envSchema = z.object({
   // Autonomous memory: JARVIS extracts + reconciles durable memories from each
   // conversation, unattended. Needs an embedding provider.
   AUTO_MEMORY_ENABLED: z.coerce.boolean().default(true),
+  // Premium neural voice (server-side TTS via OpenAI). TTS_API_KEY falls back to
+  // EMBEDDING_API_KEY — the same OpenAI key covers embeddings + voice.
+  TTS_API_KEY: z.string().optional(),
+  TTS_MODEL: z.string().default('tts-1'),
+  TTS_VOICE: z.string().default('nova'),
   GEMINI_API_KEY: z.string().optional(),
   MISTRAL_API_KEY: z.string().optional(),
 

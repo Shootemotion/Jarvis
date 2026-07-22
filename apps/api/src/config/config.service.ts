@@ -98,6 +98,18 @@ export class AppConfigService {
     return this.env.AUTO_MEMORY_ENABLED;
   }
 
+  /** Premium neural voice (OpenAI TTS). Reuses the OpenAI embedding key by default. */
+  get tts() {
+    return {
+      apiKey: this.env.TTS_API_KEY ?? this.env.EMBEDDING_API_KEY,
+      model: this.env.TTS_MODEL,
+      voice: this.env.TTS_VOICE,
+    };
+  }
+  get hasTts(): boolean {
+    return !!this.tts.apiKey;
+  }
+
   /**
    * Allowed CORS origins. Explicit CORS_ORIGINS list wins; otherwise localhost
    * (dev) plus the configured public web URL.

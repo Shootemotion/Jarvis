@@ -226,6 +226,24 @@ export const api = {
     openaiKey?: string;
   }) => request<AiSettings>('/settings/ai', { method: 'PUT', body: JSON.stringify(body) }),
   getProviders: () => request<ProvidersInfo>('/providers'),
+  getVoiceConfig: () =>
+    request<{ available: boolean; voices: string[]; voice: string }>('/voice/config'),
+  /** Premium neural TTS → returns an object URL for an <audio> to play. */
+  synthesizeSpeech: async (text: string, voice?: string): Promise<string> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${API_URL}/api/voice/tts`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ text, voice }),
+    });
+    if (!res.ok) throw new Error(`TTS ${res.status}`);
+    return URL.createObjectURL(await res.blob());
+  },
   getOrchestratorRecent: () => request<ActionLogEntry[]>('/orchestrator/recent'),
   getTools: () => request<ToolInfo[]>('/orchestrator/tools'),
   listTokens: () => request<ApiTokenInfo[]>('/tokens'),
