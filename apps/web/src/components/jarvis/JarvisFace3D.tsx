@@ -156,27 +156,57 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
       if (soma) somaNodes.push(i);
       return i;
     };
-    // Recursively grow a dendrite branch (parent→child segments only → no triangles).
-    const grow = (parent: number, dx: number, dy: number, dz: number, len: number, depth: number, hue: number) => {
-      if (depth <= 0) return;
-      const idx = addNode(nX[parent] + dx * len, nY[parent] + dy * len, nZ[parent] + dz * len, hue, depth === 1);
-      edgeIdx.push(parent, idx);
-      const branches = depth > 2 ? 2 : Math.random() < 0.55 ? 2 : 1;
+    // Neural network: big cell bodies (hubs/soma) surrounded by dendrite nodes,
+    // all cross-linked (nearest-neighbour web) + hub↔hub axons → everything
+    // connects to everything, no loose dead-end tips.
+    const hubIdx: number[] = [];
+    const HUBS = 12;
+    for (let h = 0; h < HUBS; h++) {
+      const hue = rand(-0.05, 0.16);
+      const hx = rand(-8.5, 8.5), hy = rand(-5, 5), hz = rand(-1.5, -9.5);
+      const hi = addNode(hx, hy, hz, hue, true);
+      hubIdx.push(hi);
+      const branches = 7 + ((Math.random() * 6) | 0);
       for (let b = 0; b < branches; b++) {
-        const cx = dx + rand(-0.55, 0.55), cy = dy + rand(-0.55, 0.55), cz = dz + rand(-0.35, 0.35);
-        const l = Math.hypot(cx, cy, cz) || 1;
-        grow(idx, cx / l, cy / l, cz / l, len * rand(0.72, 0.9), depth - 1, hue);
+        const r = rand(0.9, 2.8);
+        const th = rand(0, Math.PI * 2);
+        const bx = hx + Math.cos(th) * r;
+        const by = hy + Math.sin(th) * r * 0.85;
+        const bz = hz + rand(-1, 1) * r * 0.5;
+        const bi = addNode(bx, by, bz, hue, false);
+        edgeIdx.push(hi, bi); // radial dendrite
       }
+    }
+    const N0 = nX.length;
+    const dist2 = (i: number, j: number) => {
+      const dx = nX[i] - nX[j], dy = nY[i] - nY[j], dz = nZ[i] - nZ[j];
+      return dx * dx + dy * dy + dz * dz;
     };
-    const NEURONS = 18;
-    for (let n = 0; n < NEURONS; n++) {
-      const soma = addNode(rand(-8.5, 8.5), rand(-5.5, 5.5), rand(-1.5, -9.5), rand(-0.05, 0.16), true);
-      const dendrites = 5 + ((Math.random() * 3) | 0);
-      for (let d = 0; d < dendrites; d++) {
-        const dx = rand(-1, 1), dy = rand(-1, 1), dz = rand(-0.5, 0.5);
-        const l = Math.hypot(dx, dy, dz) || 1;
-        grow(soma, dx / l, dy / l, dz / l, rand(0.6, 0.95), 4, nHue[soma]);
+    const seenEdge = new Set<string>();
+    const key = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+    for (let e = 0; e < edgeIdx.length; e += 2) seenEdge.add(key(edgeIdx[e], edgeIdx[e + 1]));
+    const pushEdge = (a: number, b: number) => {
+      if (a === b) return;
+      const k = key(a, b);
+      if (seenEdge.has(k)) return;
+      seenEdge.add(k);
+      edgeIdx.push(a, b);
+    };
+    // Cross-link every node to its 2 nearest neighbours (interconnected web).
+    for (let i = 0; i < N0; i++) {
+      const cands: { j: number; d: number }[] = [];
+      for (let j = 0; j < N0; j++) if (i !== j) cands.push({ j, d: dist2(i, j) });
+      cands.sort((a, b) => a.d - b.d);
+      let added = 0;
+      for (const c of cands) {
+        if (added >= 2) break;
+        if (c.d < 4.5 * 4.5) { pushEdge(i, c.j); added++; }
       }
+    }
+    // Long axons between hubs → global connectivity.
+    for (const hi of hubIdx) {
+      const cands = hubIdx.filter((h) => h !== hi).map((h) => ({ h, d: dist2(hi, h) })).sort((a, b) => a.d - b.d);
+      for (let k = 0; k < 3 && k < cands.length; k++) pushEdge(hi, cands[k].h);
     }
 
     const BG = nX.length;
@@ -236,7 +266,9 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     somaGeo.setAttribute('position', new THREE.BufferAttribute(somaPos, 3));
     const somaColAttr = new THREE.BufferAttribute(new Float32Array(somaNodes.length * 3), 3);
     somaGeo.setAttribute('color', somaColAttr);
-    bgGroup.add(new THREE.Points(somaGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.55, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+    // Core dot + a soft halo → the cell bodies read as glowing "forms", not points.
+    bgGroup.add(new THREE.Points(somaGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.85, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+    bgGroup.add(new THREE.Points(somaGeo, new THREE.PointsMaterial({ vertexColors: true, size: 2.1, map: dot, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
 
     // Bokeh depth particles (soft out-of-focus glow dust).
     const BOK = 95;
@@ -383,8 +415,58 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         root.position.set(-center.x, -(box.max.y - span / 2), -center.z);
         scl = 2.0 / span;
       } else {
-        root.position.sub(center);
-        scl = 2.0 / size.y;
+        // facecap head + PROCEDURAL holographic bust (neck + shoulders).
+        const hw = size.x, hh = size.y, hd = size.z, chinY = box.min.y;
+        const topY = chinY + hh * 0.04;
+        const botY = chinY - hh * 1.35;
+        const prof = [
+          new THREE.Vector2(hw * 0.22, topY),
+          new THREE.Vector2(hw * 0.26, chinY - hh * 0.18),
+          new THREE.Vector2(hw * 0.34, chinY - hh * 0.34),
+          new THREE.Vector2(hw * 0.66, chinY - hh * 0.6),
+          new THREE.Vector2(hw * 0.98, chinY - hh * 0.85),
+          new THREE.Vector2(hw * 1.08, chinY - hh * 1.08),
+          new THREE.Vector2(hw * 0.9, botY),
+        ];
+        const lathe = new THREE.LatheGeometry(prof, 44);
+        const bustMat = new THREE.MeshBasicMaterial({
+          color: accent.clone(),
+          wireframe: true,
+          transparent: true,
+          opacity: 0.3,
+          depthWrite: false,
+          fog: true,
+        });
+        const fadeStart = topY - (topY - botY) * 0.5;
+        bustMat.onBeforeCompile = (sh) => {
+          sh.vertexShader =
+            'varying float vBY;\n' +
+            sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vBY = position.y;');
+          sh.fragmentShader =
+            'varying float vBY;\n' +
+            sh.fragmentShader.replace(
+              '#include <dithering_fragment>',
+              `#include <dithering_fragment>\n  gl_FragColor.a *= smoothstep(${botY.toFixed(4)}, ${fadeStart.toFixed(4)}, vBY);`,
+            );
+        };
+        headMats.push(bustMat);
+        const bust = new THREE.Mesh(lathe, bustMat);
+        bust.position.set(center.x, 0, center.z);
+        bust.scale.z = 0.6; // flatten front-back → shoulders, not a barrel
+        root.add(bust);
+
+        // Glowing eyes (fill the empty sockets).
+        const eyeGeo = new THREE.SphereGeometry(hw * 0.052, 16, 16);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xbfefff, transparent: true, opacity: 0.85 });
+        for (const sx of [-1, 1]) {
+          const eye = new THREE.Mesh(eyeGeo, eyeMat);
+          eye.position.set(center.x + sx * hw * 0.16, center.y + hh * 0.05, center.z + hd * 0.32);
+          root.add(eye);
+        }
+
+        // Lift so head + bust sit centered; zoom out to fit both.
+        root.position.set(-center.x, -center.y + hh * 0.55, -center.z);
+        scl = 2.0 / (hh * 2.3);
       }
 
       headHolder = new THREE.Group();
