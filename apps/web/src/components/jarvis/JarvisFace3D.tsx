@@ -8,6 +8,9 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import styles from './Jarvis.module.css';
 import { JARVIS_STATE_META, JarvisVisualState } from './types';
 
@@ -165,10 +168,10 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         grow(idx, cx / l, cy / l, cz / l, len * rand(0.72, 0.9), depth - 1, hue);
       }
     };
-    const NEURONS = 13;
+    const NEURONS = 18;
     for (let n = 0; n < NEURONS; n++) {
-      const soma = addNode(rand(-8, 8), rand(-5, 5), rand(-1.5, -9), rand(-0.05, 0.15), true);
-      const dendrites = 4 + ((Math.random() * 3) | 0);
+      const soma = addNode(rand(-8.5, 8.5), rand(-5.5, 5.5), rand(-1.5, -9.5), rand(-0.05, 0.16), true);
+      const dendrites = 5 + ((Math.random() * 3) | 0);
       for (let d = 0; d < dendrites; d++) {
         const dx = rand(-1, 1), dy = rand(-1, 1), dz = rand(-0.5, 0.5);
         const l = Math.hypot(dx, dy, dz) || 1;
@@ -192,16 +195,36 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute('position', bgPos);
     bgGeo.setAttribute('color', bgCol);
-    const bgLineGeo = new THREE.BufferGeometry();
-    bgLineGeo.setAttribute('position', bgPos);
-    bgLineGeo.setAttribute('color', bgCol);
-    bgLineGeo.setIndex(edgeIdx);
+    // Fat, glowing dendrite strands (Line2 → real thickness, unlike 1px lines).
+    const segPos: number[] = [];
+    const segCol: number[] = [];
+    for (let e = 0; e < edgeIdx.length; e += 2) {
+      const a = edgeIdx[e], b = edgeIdx[e + 1];
+      segPos.push(nX[a], nY[a], nZ[a], nX[b], nY[b], nZ[b]);
+      segCol.push(
+        nodeBase[a * 3], nodeBase[a * 3 + 1], nodeBase[a * 3 + 2],
+        nodeBase[b * 3], nodeBase[b * 3 + 1], nodeBase[b * 3 + 2],
+      );
+    }
+    const lineGeo2 = new LineSegmentsGeometry();
+    lineGeo2.setPositions(segPos);
+    lineGeo2.setColors(segCol);
+    const lineMat2 = new LineMaterial({
+      vertexColors: true,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      linewidth: 2.4, // pixels
+      opacity: 0.85,
+    });
+    lineMat2.resolution.set(mount.clientWidth || 1, mount.clientHeight || 1);
+    const fatLines = new LineSegments2(lineGeo2, lineMat2);
 
     // Container group → gentle global drift (motion without stretching branches).
     const bgGroup = new THREE.Group();
     scene.add(bgGroup);
     bgGroup.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.1, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
-    bgGroup.add(new THREE.LineSegments(bgLineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: true })));
+    bgGroup.add(fatLines);
 
     // Soma (cell bodies) — bigger glowing dots.
     const somaPos = new Float32Array(somaNodes.length * 3);
@@ -216,7 +239,7 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     bgGroup.add(new THREE.Points(somaGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.55, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
 
     // Bokeh depth particles (soft out-of-focus glow dust).
-    const BOK = 60;
+    const BOK = 95;
     const bokPos = new Float32Array(BOK * 3);
     for (let i = 0; i < BOK; i++) { bokPos[i * 3] = rand(-11, 11); bokPos[i * 3 + 1] = rand(-7, 7); bokPos[i * 3 + 2] = rand(-4, -13); }
     const bokGeo = new THREE.BufferGeometry();
@@ -374,6 +397,7 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
       const w = mount!.clientWidth, h = mount!.clientHeight;
       renderer.setSize(w, h, false);
       composer.setSize(w, h);
+      lineMat2.resolution.set(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     }
@@ -552,7 +576,7 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
       ro.disconnect();
       ktx2.dispose();
       renderer.dispose();
-      bgGeo.dispose(); bgLineGeo.dispose(); pulseGeo.dispose(); dot.dispose();
+      bgGeo.dispose(); lineGeo2.dispose(); lineMat2.dispose(); pulseGeo.dispose(); dot.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
   }, []);
