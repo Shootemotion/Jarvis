@@ -140,46 +140,93 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     let headMesh: THREE.Mesh | null = null;
     let mIdxBlinkL = -1, mIdxBlinkR = -1, mIdxJaw = -1, mIdxMouth = -1;
 
-    // ---- background neural network ----
-    const BG = 560;
-    const bgBase = new Float32Array(BG * 3);
-    const bgSeed = new Float32Array(BG * 3);
-    for (let i = 0; i < BG; i++) {
-      bgBase[i * 3] = (Math.random() - 0.5) * 16;
-      bgBase[i * 3 + 1] = (Math.random() - 0.5) * 11;
-      bgBase[i * 3 + 2] = -2 - Math.random() * 8;
-      bgSeed[i * 3] = Math.random() * Math.PI * 2;
-      bgSeed[i * 3 + 1] = 0.2 + Math.random() * 0.6;
-      bgSeed[i * 3 + 2] = 0.15 + Math.random() * 0.5;
+    // ---- organic neural field (branching dendrites — NOT a triangle plexus) ----
+    const dot = makeDotTexture();
+    const rand = (a: number, b: number) => a + Math.random() * (b - a);
+    const nX: number[] = [], nY: number[] = [], nZ: number[] = [], nPhase: number[] = [], nHue: number[] = [];
+    const edgeIdx: number[] = [];
+    const somaNodes: number[] = [];
+
+    const addNode = (x: number, y: number, z: number, hue: number, soma = false) => {
+      const i = nX.length;
+      nX.push(x); nY.push(y); nZ.push(z); nPhase.push(Math.random() * Math.PI * 2); nHue.push(hue);
+      if (soma) somaNodes.push(i);
+      return i;
+    };
+    // Recursively grow a dendrite branch (parent→child segments only → no triangles).
+    const grow = (parent: number, dx: number, dy: number, dz: number, len: number, depth: number, hue: number) => {
+      if (depth <= 0) return;
+      const idx = addNode(nX[parent] + dx * len, nY[parent] + dy * len, nZ[parent] + dz * len, hue, depth === 1);
+      edgeIdx.push(parent, idx);
+      const branches = depth > 2 ? 2 : Math.random() < 0.55 ? 2 : 1;
+      for (let b = 0; b < branches; b++) {
+        const cx = dx + rand(-0.55, 0.55), cy = dy + rand(-0.55, 0.55), cz = dz + rand(-0.35, 0.35);
+        const l = Math.hypot(cx, cy, cz) || 1;
+        grow(idx, cx / l, cy / l, cz / l, len * rand(0.72, 0.9), depth - 1, hue);
+      }
+    };
+    const NEURONS = 13;
+    for (let n = 0; n < NEURONS; n++) {
+      const soma = addNode(rand(-8, 8), rand(-5, 5), rand(-1.5, -9), rand(-0.05, 0.15), true);
+      const dendrites = 4 + ((Math.random() * 3) | 0);
+      for (let d = 0; d < dendrites; d++) {
+        const dx = rand(-1, 1), dy = rand(-1, 1), dz = rand(-0.5, 0.5);
+        const l = Math.hypot(dx, dy, dz) || 1;
+        grow(soma, dx / l, dy / l, dz / l, rand(0.6, 0.95), 4, nHue[soma]);
+      }
     }
-    const bgPos = new THREE.BufferAttribute(bgBase.slice(), 3);
+
+    const BG = nX.length;
+    const bgBase = new Float32Array(BG * 3);
+    const bgSeed = new Float32Array(BG);
+    const nodeBase = new Float32Array(BG * 3); // static per-node color (cyan→blue→violet variety)
+    const baseCol = new THREE.Color();
+    for (let i = 0; i < BG; i++) {
+      bgBase[i * 3] = nX[i]; bgBase[i * 3 + 1] = nY[i]; bgBase[i * 3 + 2] = nZ[i];
+      bgSeed[i] = nPhase[i];
+      baseCol.setHSL((0.55 + nHue[i] + 1) % 1, 0.85, 0.6);
+      nodeBase[i * 3] = baseCol.r; nodeBase[i * 3 + 1] = baseCol.g; nodeBase[i * 3 + 2] = baseCol.b;
+    }
+    const bgPos = new THREE.BufferAttribute(bgBase, 3); // static positions
     const bgCol = new THREE.BufferAttribute(new Float32Array(BG * 3), 3);
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute('position', bgPos);
     bgGeo.setAttribute('color', bgCol);
-    const bgEdgeIdx: number[] = [];
-    for (let i = 0; i < BG; i++) {
-      const d: { j: number; v: number }[] = [];
-      for (let j = 0; j < BG; j++) {
-        if (i === j) continue;
-        const dx = bgBase[i * 3] - bgBase[j * 3], dy = bgBase[i * 3 + 1] - bgBase[j * 3 + 1], dz = bgBase[i * 3 + 2] - bgBase[j * 3 + 2];
-        d.push({ j, v: dx * dx + dy * dy + dz * dz });
-      }
-      d.sort((a, b) => a.v - b.v);
-      for (let n = 0; n < 5; n++) if (d[n].v < 5.2 * 5.2) bgEdgeIdx.push(i, d[n].j);
-    }
     const bgLineGeo = new THREE.BufferGeometry();
     bgLineGeo.setAttribute('position', bgPos);
     bgLineGeo.setAttribute('color', bgCol);
-    bgLineGeo.setIndex(bgEdgeIdx);
-    const dot = makeDotTexture();
-    scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.17, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
-    scene.add(new THREE.LineSegments(bgLineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: true })));
+    bgLineGeo.setIndex(edgeIdx);
 
-    // synapse pulses that travel from node to node along the network
+    // Container group → gentle global drift (motion without stretching branches).
+    const bgGroup = new THREE.Group();
+    scene.add(bgGroup);
+    bgGroup.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.1, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+    bgGroup.add(new THREE.LineSegments(bgLineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: true })));
+
+    // Soma (cell bodies) — bigger glowing dots.
+    const somaPos = new Float32Array(somaNodes.length * 3);
+    for (let i = 0; i < somaNodes.length; i++) {
+      const s = somaNodes[i];
+      somaPos[i * 3] = nX[s]; somaPos[i * 3 + 1] = nY[s]; somaPos[i * 3 + 2] = nZ[s];
+    }
+    const somaGeo = new THREE.BufferGeometry();
+    somaGeo.setAttribute('position', new THREE.BufferAttribute(somaPos, 3));
+    const somaColAttr = new THREE.BufferAttribute(new Float32Array(somaNodes.length * 3), 3);
+    somaGeo.setAttribute('color', somaColAttr);
+    bgGroup.add(new THREE.Points(somaGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.55, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+
+    // Bokeh depth particles (soft out-of-focus glow dust).
+    const BOK = 60;
+    const bokPos = new Float32Array(BOK * 3);
+    for (let i = 0; i < BOK; i++) { bokPos[i * 3] = rand(-11, 11); bokPos[i * 3 + 1] = rand(-7, 7); bokPos[i * 3 + 2] = rand(-4, -13); }
+    const bokGeo = new THREE.BufferGeometry();
+    bokGeo.setAttribute('position', new THREE.BufferAttribute(bokPos, 3));
+    bgGroup.add(new THREE.Points(bokGeo, new THREE.PointsMaterial({ color: 0x2f6fd0, size: 1.0, map: dot, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+
+    // Synapse pulses travelling along the dendrites.
     const bgEdges: [number, number][] = [];
-    for (let i = 0; i < bgEdgeIdx.length; i += 2) bgEdges.push([bgEdgeIdx[i], bgEdgeIdx[i + 1]]);
-    const MAXP = 90;
+    for (let i = 0; i < edgeIdx.length; i += 2) bgEdges.push([edgeIdx[i], edgeIdx[i + 1]]);
+    const MAXP = 120;
     const pulsePos = new Float32Array(MAXP * 3);
     const pulseCol = new Float32Array(MAXP * 3);
     const pulsePosAttr = new THREE.BufferAttribute(pulsePos, 3);
@@ -187,9 +234,10 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     const pulseGeo = new THREE.BufferGeometry();
     pulseGeo.setAttribute('position', pulsePosAttr);
     pulseGeo.setAttribute('color', pulseColAttr);
-    scene.add(new THREE.Points(pulseGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.24, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+    bgGroup.add(new THREE.Points(pulseGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.3, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
     const pulses: { edge: number; t: number; speed: number }[] = [];
     let pulseAcc = 0;
+    const somaColArr = somaColAttr.array as Float32Array;
 
     // ---- renderer + bloom ----
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -357,7 +405,6 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
       const p = paramsFor(st);
       tmpColor.set(JARVIS_STATE_META[st].color);
       curColor.lerp(tmpColor, Math.min(1, dt * 4));
-      const cr = curColor.r, cg = curColor.g, cb = curColor.b;
 
       // Background field drifts slowly through nearby tones (independent of the
       // head color) so it feels alive / neural.
@@ -439,16 +486,26 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         if (mIdxMouth >= 0 && mIdxMouth !== mIdxJaw) infl[mIdxMouth] = jw * 0.5;
       }
 
-      // background drift + colors
+      // Branches static; animate brightness (shimmer), soma glow, and a gentle
+      // global drift (so it breathes without stretching the dendrites).
       for (let i = 0; i < BG; i++) {
-        const ph = bgSeed[i * 3], fr = bgSeed[i * 3 + 1], am = bgSeed[i * 3 + 2] * p.drift;
-        bgPosArr[i * 3] = bgBase[i * 3] + Math.sin(t * fr + ph) * am;
-        bgPosArr[i * 3 + 1] = bgBase[i * 3 + 1] + Math.cos(t * fr * 0.9 + ph) * am;
-        const b = (0.5 + 0.5 * Math.sin(t * (fr + 0.4) + ph)) * 0.45 * p.dim;
-        bgColArr[i * 3] = bcr * b; bgColArr[i * 3 + 1] = bcg * b; bgColArr[i * 3 + 2] = bcb * b;
+        const b = (0.32 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.8 + bgSeed[i]))) * p.dim;
+        bgColArr[i * 3] = nodeBase[i * 3] * b;
+        bgColArr[i * 3 + 1] = nodeBase[i * 3 + 1] * b;
+        bgColArr[i * 3 + 2] = nodeBase[i * 3 + 2] * b;
       }
-      bgPos.needsUpdate = true;
       bgCol.needsUpdate = true;
+      for (let i = 0; i < somaNodes.length; i++) {
+        const s = somaNodes[i];
+        const b = (0.7 + 0.5 * Math.sin(t * 1.1 + bgSeed[s])) * p.dim;
+        somaColArr[i * 3] = Math.min(1, nodeBase[s * 3] * b + 0.12);
+        somaColArr[i * 3 + 1] = Math.min(1, nodeBase[s * 3 + 1] * b + 0.12);
+        somaColArr[i * 3 + 2] = Math.min(1, nodeBase[s * 3 + 2] * b + 0.18);
+      }
+      somaColAttr.needsUpdate = true;
+      bgGroup.rotation.y = Math.sin(t * 0.045) * 0.05;
+      bgGroup.rotation.z = Math.sin(t * 0.03) * 0.025;
+      bgGroup.position.x = Math.sin(t * 0.05) * 0.15;
 
       // synapse pulses travelling node → node
       pulseAcc += dt * 22 * p.drift;
