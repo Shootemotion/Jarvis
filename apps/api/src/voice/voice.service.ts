@@ -13,7 +13,7 @@ export class VoiceService {
   }
 
   async synthesize(text: string, voice?: string): Promise<Buffer> {
-    const { apiKey, model, voice: defaultVoice } = this.config.tts;
+    const { apiKey, model, voice: defaultVoice, instructions } = this.config.tts;
     if (!apiKey) throw new ServiceUnavailableException('Voz premium no configurada (falta TTS_API_KEY).');
     const chosen = voice && OPENAI_VOICES.includes(voice) ? voice : defaultVoice;
 
@@ -25,6 +25,8 @@ export class VoiceService {
         input: text.slice(0, 4000),
         voice: chosen,
         response_format: 'mp3',
+        // Steering instructions are supported by gpt-4o-*-tts (ignored by tts-1).
+        ...(model.includes('gpt-4o') && instructions ? { instructions } : {}),
       }),
     });
     if (!res.ok) {

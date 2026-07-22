@@ -104,6 +104,7 @@ export class AppConfigService {
       apiKey: this.env.TTS_API_KEY ?? this.env.EMBEDDING_API_KEY,
       model: this.env.TTS_MODEL,
       voice: this.env.TTS_VOICE,
+      instructions: this.env.TTS_INSTRUCTIONS,
     };
   }
   get hasTts(): boolean {

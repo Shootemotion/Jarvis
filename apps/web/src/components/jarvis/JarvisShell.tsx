@@ -81,22 +81,18 @@ export function JarvisShell() {
     setState('thinking');
     voice.stopSpeaking(); // clear any prior speech before a new turn
     try {
-      await send(text, {
-        onSentence: (s) => {
-          if (voiceEnabled)
-            voice.speakChunk(s, {
-              onStart: () => setState('speaking'),
-              onEnd: () => setState('idle'),
-            });
-        },
-      });
+      const res = await send(text);
       refreshUsage();
-      if (!voiceEnabled) {
+      // Speak the full reply once it's ready (smoother than sentence-by-sentence).
+      if (voiceEnabled && res?.reply?.content) {
+        voice.speak(res.reply.content, {
+          onStart: () => setState('speaking'),
+          onEnd: () => setState('idle'),
+        });
+        setState('speaking');
+      } else {
         setState('speaking');
         setTimeout(() => setState('idle'), 1200);
-      } else {
-        // If nothing was queued to speak, don't leave it stuck on "thinking".
-        setTimeout(() => setState((s) => (s === 'thinking' ? 'idle' : s)), 700);
       }
     } catch (err) {
       console.error(err);

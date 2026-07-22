@@ -22,9 +22,11 @@ import { ChatDto } from './dto';
 import { JARVIS_SYSTEM_PROMPT } from './system-prompt';
 
 const MAX_HISTORY = 20;
-const MEMORY_TOP_K = 5;
-// Only inject memories whose cosine similarity clears this bar.
-const MEMORY_MIN_SCORE = 0.4;
+const MEMORY_TOP_K = 6;
+// Recall thresholds (cosine). Personal memories are lenient (a question rarely
+// matches a statement closely); knowledge citations stay a bit stricter.
+const MEMORY_MIN_SCORE = 0.22;
+const KNOWLEDGE_MIN_SCORE = 0.35;
 
 /** Everything resolved before generation — shared by chat() and chatStream(). */
 interface ChatContext {
@@ -204,7 +206,7 @@ export class ChatService {
       wantDocs && qVec
         ? this.knowledge
             .search(userId, dto.message, projId, MEMORY_TOP_K, qVec)
-            .then((h) => h.filter((x) => x.score >= MEMORY_MIN_SCORE))
+            .then((h) => h.filter((x) => x.score >= KNOWLEDGE_MIN_SCORE))
             .catch(() => [] as KnowledgeHit[])
         : Promise.resolve([] as KnowledgeHit[]),
       this.prisma.message.findMany({
