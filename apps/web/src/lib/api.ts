@@ -91,6 +91,11 @@ export interface KnowledgeHit {
   score: number;
 }
 
+export interface KnowledgeGraph {
+  nodes: { id: string; label: string; group: string; size: number }[];
+  edges: { source: string; target: string; weight: number }[];
+}
+
 export interface ProvidersInfo {
   chat: { name: string };
   embedding: { configured: boolean; provider: string; model: string; dimensions: number };
@@ -231,6 +236,7 @@ export const api = {
     }),
   revokeToken: (id: string) => request<{ revoked: boolean }>(`/tokens/${id}`, { method: 'DELETE' }),
   listDocuments: () => request<KnowledgeDoc[]>('/knowledge/documents'),
+  getGraph: () => request<KnowledgeGraph>('/knowledge/graph'),
   deleteDocument: (id: string) =>
     request<{ deleted: boolean }>(`/knowledge/documents/${id}`, { method: 'DELETE' }),
   searchKnowledge: (body: { query: string; projectId?: string }) =>

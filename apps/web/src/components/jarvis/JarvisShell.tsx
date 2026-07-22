@@ -258,6 +258,9 @@ export function JarvisShell() {
               <Link href="/orchestrator" className={styles.navLink} title="Orquestador">
                 🧭
               </Link>
+              <Link href="/graph" className={styles.navLink} title="Red de conocimiento">
+                🕸
+              </Link>
               <Link href="/memory" className={styles.navLink}>
                 🧠 Memoria
               </Link>

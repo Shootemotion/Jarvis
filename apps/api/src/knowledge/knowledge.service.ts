@@ -401,6 +401,102 @@ export class KnowledgeService {
     return { pushed: results.length, results };
   }
 
+  // ---- knowledge graph (auto-woven by semantic similarity) ----------------
+
+  /**
+   * Build the user's knowledge graph: nodes are documents (centroid of their
+   * chunk embeddings) + memories; edges are nearest-neighbours by cosine
+   * similarity. No manual [[links]] needed — the graph weaves itself by meaning.
+   */
+  async graph(userId: string) {
+    const parseVec = (s: string): number[] => JSON.parse(s) as number[];
+    const norm = (v: number[]): number[] => {
+      let len = 0;
+      for (const x of v) len += x * x;
+      len = Math.sqrt(len) || 1;
+      return v.map((x) => x / len);
+    };
+
+    // Document centroids (average of chunk embeddings).
+    const chunkRows = await this.prisma.$queryRaw<{ documentId: string; emb: string }[]>`
+      SELECT document_id AS "documentId", embedding::text AS emb
+      FROM document_chunks WHERE user_id = ${userId}::uuid AND embedding IS NOT NULL
+    `;
+    const docMeta = await this.prisma.document.findMany({
+      where: { userId },
+      select: { id: true, title: true, path: true, source: true, chunkCount: true },
+    });
+    const metaById = new Map(docMeta.map((d) => [d.id, d]));
+    const byDoc = new Map<string, { sum: number[]; n: number }>();
+    for (const r of chunkRows) {
+      const v = parseVec(r.emb);
+      const acc = byDoc.get(r.documentId);
+      if (!acc) byDoc.set(r.documentId, { sum: v.slice(), n: 1 });
+      else {
+        for (let i = 0; i < v.length; i++) acc.sum[i] += v[i];
+        acc.n++;
+      }
+    }
+
+    const memRows = await this.prisma.$queryRaw<{ id: string; type: string; content: string; emb: string }[]>`
+      SELECT id, type, content, embedding::text AS emb
+      FROM memories WHERE user_id = ${userId}::uuid AND embedding IS NOT NULL
+      LIMIT 300
+    `;
+
+    interface GNode { id: string; label: string; group: string; size: number; vec: number[] }
+    const nodes: GNode[] = [];
+    for (const [docId, acc] of byDoc) {
+      const meta = metaById.get(docId);
+      if (!meta) continue;
+      nodes.push({
+        id: `doc:${docId}`,
+        label: meta.title || meta.path,
+        group: meta.source === 'obsidian' ? 'obsidian' : 'document',
+        size: Math.min(22, 5 + meta.chunkCount),
+        vec: norm(acc.sum.map((x) => x / acc.n)),
+      });
+    }
+    for (const m of memRows) {
+      nodes.push({
+        id: `mem:${m.id}`,
+        label: m.content.slice(0, 48),
+        group: `memory:${m.type}`,
+        size: 5,
+        vec: norm(parseVec(m.emb)),
+      });
+    }
+
+    // kNN edges by cosine similarity (vectors already normalized → dot product).
+    const K = 3;
+    const THRESH = 0.68;
+    const seen = new Set<string>();
+    const edges: { source: string; target: string; weight: number }[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const sims: { j: number; s: number }[] = [];
+      for (let j = 0; j < nodes.length; j++) {
+        if (i === j) continue;
+        const a = nodes[i].vec;
+        const b = nodes[j].vec;
+        let d = 0;
+        for (let k = 0; k < a.length; k++) d += a[k] * b[k];
+        if (d >= THRESH) sims.push({ j, s: d });
+      }
+      sims.sort((x, y) => y.s - x.s);
+      for (const { j, s } of sims.slice(0, K)) {
+        const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push({ source: nodes[i].id, target: nodes[j].id, weight: Math.round(s * 100) / 100 });
+      }
+    }
+
+    return {
+      nodes: nodes.map(({ vec: _vec, ...n }) => n),
+      edges,
+    };
+  }
+
   async search(
     userId: string,
     query: string,

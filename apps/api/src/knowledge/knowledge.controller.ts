@@ -42,6 +42,12 @@ export class KnowledgeController {
     return this.knowledge.list(user.id);
   }
 
+  /** The user's knowledge graph (nodes + semantic edges) for the visualization. */
+  @Get('graph')
+  graph(@CurrentUser() user: AuthUser) {
+    return this.knowledge.graph(user.id);
+  }
+
   @Delete('documents/:id')
   remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.knowledge.remove(user.id, id);
