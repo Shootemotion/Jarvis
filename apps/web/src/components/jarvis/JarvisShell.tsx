@@ -6,6 +6,20 @@ import { JarvisAvatar } from './JarvisAvatar';
 import { JarvisStateIndicator } from './JarvisStateIndicator';
 import { JarvisCommandPanel } from './JarvisCommandPanel';
 import { JARVIS_STATE_META } from './types';
+import { VersionBadge } from './VersionBadge';
+import {
+  IconMic,
+  IconStop,
+  IconWaves,
+  IconVoice,
+  IconChat,
+  IconCamera,
+  IconEye,
+  IconMirror,
+  IconVolume,
+  IconVolumeOff,
+  IconSpinner,
+} from './Icons';
 import Link from 'next/link';
 import { useJarvisState } from '@/hooks/useJarvisState';
 import { useChat } from '@/hooks/useChat';
@@ -132,6 +146,7 @@ export function JarvisShell() {
         <div className={styles.brandWrap}>
           <h1 className={styles.brand}>JARVIS</h1>
           <span className={styles.brandTag}>MVP</span>
+          <VersionBadge />
         </div>
         <div className={styles.controls}>
           {/* Voice / Chat mode switch */}
@@ -142,7 +157,7 @@ export function JarvisShell() {
               onClick={() => setMode('voice')}
               aria-selected={mode === 'voice'}
             >
-              🎙 Voz
+              <IconVoice size={13} /> Voz
             </button>
             <button
               type="button"
@@ -150,7 +165,7 @@ export function JarvisShell() {
               onClick={() => setMode('chat')}
               aria-selected={mode === 'chat'}
             >
-              💬 Chat
+              <IconChat size={13} /> Chat
             </button>
           </div>
 
@@ -162,7 +177,19 @@ export function JarvisShell() {
             title="Cámara: apagada → Seguir → Reflejo"
             style={cameraMode !== 'off' ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
           >
-            {cameraMode === 'off' ? '📷 Cámara' : cameraMode === 'follow' ? '👁 Seguir' : '🪞 Reflejo'}
+            {cameraMode === 'off' ? (
+              <>
+                <IconCamera size={14} /> Cámara
+              </>
+            ) : cameraMode === 'follow' ? (
+              <>
+                <IconEye size={14} /> Seguir
+              </>
+            ) : (
+              <>
+                <IconMirror size={14} /> Reflejo
+              </>
+            )}
           </button>
           {voice.supported && (
             <button
@@ -179,7 +206,8 @@ export function JarvisShell() {
                   : undefined
               }
             >
-              {voice.handsFree ? (voice.awake ? '👂 Atento' : '👂 Jarvis') : '👂'}
+              <IconWaves size={14} />
+              {voice.handsFree ? (voice.awake ? ' Atento' : ' Jarvis') : ''}
             </button>
           )}
           <button
@@ -192,7 +220,7 @@ export function JarvisShell() {
             title="Voz hablada (TTS)"
             style={voiceEnabled ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}
           >
-            {voiceEnabled ? '🔊' : '🔇'}
+            {voiceEnabled ? <IconVolume size={15} /> : <IconVolumeOff size={15} />}
           </button>
           {voice.premium ? (
             <select
@@ -307,7 +335,13 @@ export function JarvisShell() {
                   title={voice.listening ? 'Detener y transcribir' : 'Dictar'}
                   style={voice.listening ? { color: '#f87171', borderColor: '#f87171' } : undefined}
                 >
-                  {voice.transcribing ? '⏳' : voice.listening ? '⏹' : '🎤'}
+                  {voice.transcribing ? (
+                    <IconSpinner size={14} />
+                  ) : voice.listening ? (
+                    <IconStop size={14} />
+                  ) : (
+                    <IconMic size={14} />
+                  )}
                 </button>
               )}
             </>
@@ -404,7 +438,15 @@ export function JarvisShell() {
               disabled={offline || voice.transcribing || sending}
               aria-label={voice.handsFree ? 'Desactivar manos libres' : voice.listening ? 'Detener' : 'Hablar'}
             >
-              {voice.transcribing ? '⏳' : voice.awake ? '👂' : voice.listening ? '■' : voice.handsFree ? '👂' : '🎤'}
+              {voice.transcribing ? (
+                <IconSpinner size={30} />
+              ) : voice.awake || voice.handsFree ? (
+                <IconWaves size={30} />
+              ) : voice.listening ? (
+                <IconStop size={30} />
+              ) : (
+                <IconMic size={30} />
+              )}
             </button>
           ) : (
             <p className={styles.voiceHint}>Tu navegador no soporta micrófono.</p>

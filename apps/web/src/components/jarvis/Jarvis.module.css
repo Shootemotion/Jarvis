@@ -515,6 +515,9 @@
 
 .modeOn,
 .modeOff {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-family: var(--font-hud);
   font-size: 0.7rem;
   letter-spacing: 0.06em;

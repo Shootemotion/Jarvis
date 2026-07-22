@@ -27,6 +27,8 @@ export class HealthController {
       env: this.config.env.APP_ENV,
       db,
       ollama: this.config.ollama,
+      // Render injects RENDER_GIT_COMMIT — lets the UI show the live API version.
+      version: (process.env.RENDER_GIT_COMMIT ?? 'dev').slice(0, 7),
       timestamp: new Date().toISOString(),
     };
   }
