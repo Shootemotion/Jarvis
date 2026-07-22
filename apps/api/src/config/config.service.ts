@@ -93,6 +93,11 @@ export class AppConfigService {
     return this.env.MANAGED_LLM_FOR_ALL;
   }
 
+  /** Autonomous memory extraction from conversations. */
+  get autoMemoryEnabled(): boolean {
+    return this.env.AUTO_MEMORY_ENABLED;
+  }
+
   /**
    * Allowed CORS origins. Explicit CORS_ORIGINS list wins; otherwise localhost
    * (dev) plus the configured public web URL.

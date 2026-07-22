@@ -10,6 +10,7 @@ import type { ChatMessage } from '@jarvis/providers';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderRegistryService } from '../providers/provider-registry.service';
 import { MemoryService, MemorySearchResult } from '../memory/memory.service';
+import { AutonomousMemoryService } from '../memory/autonomous-memory.service';
 import { KnowledgeService, KnowledgeHit } from '../knowledge/knowledge.service';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { UsageService } from '../metering/usage.service';
@@ -33,6 +34,7 @@ export class ChatService {
     private readonly prisma: PrismaService,
     private readonly registry: ProviderRegistryService,
     private readonly memory: MemoryService,
+    private readonly autoMemory: AutonomousMemoryService,
     private readonly knowledge: KnowledgeService,
     private readonly entitlements: EntitlementsService,
     private readonly usage: UsageService,
@@ -226,6 +228,13 @@ export class ChatService {
         },
       })
       .catch(() => undefined);
+
+    // Learn from this exchange in the background (unattended memory) — never blocks the reply.
+    void this.autoMemory.learn(userId, {
+      user: dto.message,
+      assistant: reply.content,
+      projectId: conversation.projectId ?? undefined,
+    });
 
     const embeddingProvider = this.registry.hasEmbedding()
       ? this.config.embeddings.provider

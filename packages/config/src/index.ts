@@ -63,6 +63,9 @@ const envSchema = z.object({
   // When true, everyone (incl. Free) uses the managed premium LLM instead of
   // Ollama. Useful in cloud where Ollama doesn't exist. Cost is bounded by quotas.
   MANAGED_LLM_FOR_ALL: z.coerce.boolean().default(false),
+  // Autonomous memory: JARVIS extracts + reconciles durable memories from each
+  // conversation, unattended. Needs an embedding provider.
+  AUTO_MEMORY_ENABLED: z.coerce.boolean().default(true),
   GEMINI_API_KEY: z.string().optional(),
   MISTRAL_API_KEY: z.string().optional(),
 
