@@ -119,26 +119,33 @@ export class ChatService {
     });
 
     // 3) Gather knowledge per the plan's required sources (best-effort).
+    // Embed the query ONCE (reused by memory + knowledge), then run memory +
+    // knowledge + history concurrently to minimize latency.
+    const projId = conversation.projectId ?? undefined;
     const wantMemory = plan.requiredKnowledgeSources.includes('memory');
     const wantDocs =
       plan.requiredKnowledgeSources.includes('documents') ||
       plan.requiredKnowledgeSources.includes('obsidian');
-    const memories = wantMemory
-      ? await this.retrieveMemories(userId, dto.message, conversation.projectId ?? undefined)
-      : [];
-    const knowledgeHits = wantDocs
-      ? (
-          await this.knowledge
-            .search(userId, dto.message, conversation.projectId ?? undefined, MEMORY_TOP_K)
+    let qVec: number[] | null = null;
+    if ((wantMemory || wantDocs) && this.registry.hasEmbedding()) {
+      qVec = await this.registry.embed(dto.message).catch(() => null);
+    }
+    const [memories, knowledgeHits, history] = await Promise.all([
+      wantMemory && qVec
+        ? this.retrieveMemories(userId, dto.message, projId, qVec)
+        : Promise.resolve([] as MemorySearchResult[]),
+      wantDocs && qVec
+        ? this.knowledge
+            .search(userId, dto.message, projId, MEMORY_TOP_K, qVec)
+            .then((h) => h.filter((x) => x.score >= MEMORY_MIN_SCORE))
             .catch(() => [] as KnowledgeHit[])
-        ).filter((h) => h.score >= MEMORY_MIN_SCORE)
-      : [];
-
-    const history = await this.prisma.message.findMany({
-      where: { conversationId: conversation.id },
-      orderBy: { createdAt: 'asc' },
-      take: MAX_HISTORY,
-    });
+        : Promise.resolve([] as KnowledgeHit[]),
+      this.prisma.message.findMany({
+        where: { conversationId: conversation.id },
+        orderBy: { createdAt: 'asc' },
+        take: MAX_HISTORY,
+      }),
+    ]);
 
     // 4) System prompt = base + mode addendum + memory + knowledge.
     const modeAddendum = this.orchestrator.modePrompt(plan.taskType);
@@ -272,12 +279,14 @@ export class ChatService {
     userId: string,
     query: string,
     projectId?: string,
+    queryVector?: number[],
   ): Promise<MemorySearchResult[]> {
     try {
       const results = await this.memory.search(
         userId,
         { query, projectId, limit: MEMORY_TOP_K },
         true, // automatic-use memories only
+        queryVector,
       );
       return results.filter((m) => m.score >= MEMORY_MIN_SCORE);
     } catch (err) {

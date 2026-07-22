@@ -100,8 +100,10 @@ export class MemoryService {
     userId: string,
     dto: SearchMemoryDto,
     automaticOnly = false,
+    queryVector?: number[],
   ): Promise<MemorySearchResult[]> {
-    const qvec = this.toVector(await this.registry.embed(dto.query));
+    // Reuse a precomputed query embedding when given (avoids a duplicate call).
+    const qvec = this.toVector(queryVector ?? (await this.registry.embed(dto.query)));
     const limit = dto.limit ?? 5;
 
     const conditions: Prisma.Sql[] = [

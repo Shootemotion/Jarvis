@@ -502,9 +502,10 @@ export class KnowledgeService {
     query: string,
     projectId?: string,
     limit = 6,
+    queryVector?: number[],
   ): Promise<KnowledgeHit[]> {
     if (!this.registry.hasEmbedding()) return [];
-    const vec = `[${(await this.registry.embed(query)).join(',')}]`;
+    const vec = `[${(queryVector ?? (await this.registry.embed(query))).join(',')}]`;
     const conds: Prisma.Sql[] = [
       Prisma.sql`user_id = ${userId}::uuid`,
       Prisma.sql`embedding IS NOT NULL`,
