@@ -6,7 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ChatMessage } from '@jarvis/providers';
+import type { AIProvider, ChatMessage } from '@jarvis/providers';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderRegistryService } from '../providers/provider-registry.service';
 import { MemoryService, MemorySearchResult } from '../memory/memory.service';
@@ -26,6 +26,27 @@ const MEMORY_TOP_K = 5;
 // Only inject memories whose cosine similarity clears this bar.
 const MEMORY_MIN_SCORE = 0.4;
 
+/** Everything resolved before generation — shared by chat() and chatStream(). */
+interface ChatContext {
+  conversation: { id: string; projectId: string | null };
+  entPlan: string;
+  provider: AIProvider;
+  source: string;
+  plan: ReturnType<OrchestratorService['buildPlan']>;
+  sources: { path: string; heading: string | null; score: number }[];
+  messages: ChatMessage[];
+  genModel: string | undefined;
+  memoriesLen: number;
+}
+
+interface FinalReply {
+  content: string;
+  provider: string;
+  model: string;
+  usage?: { inputTokens?: number; outputTokens?: number };
+  latencyMs?: number;
+}
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -43,8 +64,68 @@ export class ChatService {
     private readonly orchestrator: OrchestratorService,
   ) {}
 
+  /** Non-streaming chat: one request → one full reply. */
   async chat(userId: string, dto: ChatDto) {
-    // Plan gating + quota: block when the monthly message limit is reached.
+    const ctx = await this.prepare(userId, dto);
+    let reply;
+    try {
+      reply = await ctx.provider.chat({ messages: ctx.messages, model: ctx.genModel });
+    } catch (err) {
+      this.logger.error(`Provider error: ${String(err)}`);
+      throw new ServiceUnavailableException(
+        err instanceof Error ? err.message : 'Fallo del proveedor de IA.',
+      );
+    }
+    return this.finalize(userId, dto, ctx, {
+      content: reply.content,
+      provider: reply.provider,
+      model: reply.model,
+      usage: reply.usage,
+      latencyMs: reply.latencyMs,
+    });
+  }
+
+  /** Streaming chat: yields {delta} as tokens arrive, then a final {done, meta}. */
+  async *chatStream(
+    userId: string,
+    dto: ChatDto,
+  ): AsyncGenerator<{ delta?: string; done?: boolean; meta?: unknown }> {
+    const ctx = await this.prepare(userId, dto);
+    const start = Date.now();
+    let full = '';
+    try {
+      if (ctx.provider.stream) {
+        for await (const chunk of ctx.provider.stream({ messages: ctx.messages, model: ctx.genModel })) {
+          if (chunk.delta) {
+            full += chunk.delta;
+            yield { delta: chunk.delta };
+          }
+          if (chunk.done) break;
+        }
+      } else {
+        // Provider without streaming → single shot, emitted as one delta.
+        const reply = await ctx.provider.chat({ messages: ctx.messages, model: ctx.genModel });
+        full = reply.content;
+        yield { delta: full };
+      }
+    } catch (err) {
+      this.logger.error(`Provider stream error: ${String(err)}`);
+      throw new ServiceUnavailableException(
+        err instanceof Error ? err.message : 'Fallo del proveedor de IA.',
+      );
+    }
+    const meta = await this.finalize(userId, dto, ctx, {
+      content: full,
+      provider: ctx.provider.name,
+      model: ctx.genModel ?? ctx.provider.name,
+      latencyMs: Date.now() - start,
+    });
+    yield { done: true, meta };
+  }
+
+  /** Resolve everything up to (but not including) generation. */
+  private async prepare(userId: string, dto: ChatDto): Promise<ChatContext> {
+    // Plan gating + quota.
     const ent = await this.entitlements.getForUser(userId);
     const limit = ent.limits.messagesPerMonth ?? -1;
     if (limit >= 0) {
@@ -55,29 +136,19 @@ export class ChatService {
         );
       }
     }
-    // Managed premium when the plan unlocks it, or when the deployment forces it
-    // for everyone (cloud without Ollama).
     const allowPremium =
       ent.features.includes(FEATURES.PREMIUM_LLM) || this.config.managedLlmForAll;
 
     const conversation = await this.resolveConversation(userId, dto);
-
-    // Persist the user's message first.
     await this.prisma.message.create({
-      data: {
-        conversationId: conversation.id,
-        userId,
-        role: 'user',
-        content: dto.message,
-      },
+      data: { conversationId: conversation.id, userId, role: 'user', content: dto.message },
     });
 
-    // 1) Resolve the provider first (BYO key → managed premium → Ollama) so the
-    // orchestrator can plan around what will actually run.
+    // Provider resolution: BYO → managed premium → Ollama.
     const ai = await this.aiSettings.getResolved(userId);
     const order =
       ai.preferredProvider === 'auto' ? ['anthropic', 'openai'] : [ai.preferredProvider];
-    let provider = null;
+    let provider: AIProvider | null = null;
     let source = 'local';
     let reqModel: string | undefined;
     for (const pn of order) {
@@ -103,10 +174,8 @@ export class ChatService {
       provider = this.registry.getProvider('ollama');
     }
 
-    // 2) Orchestration plan: task type, knowledge sources, model tier, tools, cost.
+    // Orchestration plan.
     const baseModel = source === 'byo' ? ai.model : this.config.chatModelResolved;
-    // Knowledge sources are a Pro capability — also enabled when the deployment
-    // grants managed access to everyone (single-owner / MANAGED_LLM_FOR_ALL).
     const knowledgePlan =
       ent.plan === 'pro' || this.config.managedLlmForAll ? 'pro' : 'free';
     const plan = this.orchestrator.buildPlan({
@@ -118,9 +187,7 @@ export class ChatService {
       hasEmbedding: this.registry.hasEmbedding(),
     });
 
-    // 3) Gather knowledge per the plan's required sources (best-effort).
-    // Embed the query ONCE (reused by memory + knowledge), then run memory +
-    // knowledge + history concurrently to minimize latency.
+    // Retrieval — embed query once, run memory + knowledge + history concurrently.
     const projId = conversation.projectId ?? undefined;
     const wantMemory = plan.requiredKnowledgeSources.includes('memory');
     const wantDocs =
@@ -147,7 +214,6 @@ export class ChatService {
       }),
     ]);
 
-    // 4) System prompt = base + mode addendum + memory + knowledge.
     const modeAddendum = this.orchestrator.modePrompt(plan.taskType);
     const blocks = [JARVIS_SYSTEM_PROMPT];
     if (modeAddendum) blocks.push(modeAddendum);
@@ -163,31 +229,32 @@ export class ChatService {
 
     const messages: ChatMessage[] = [
       { role: 'system', content: systemContent },
-      ...history.map((m) => ({
-        role: m.role as ChatMessage['role'],
-        content: m.content,
-      })),
+      ...history.map((m) => ({ role: m.role as ChatMessage['role'], content: m.content })),
     ];
 
-    this.logger.log(
-      `chat -> provider=${provider.name} model=${plan.model} task=${plan.taskType} source=${source}`,
-    );
-
-    // 5) Generation model: BYO keeps the user's model; managed uses the plan's pick.
     const genModel =
       source === 'byo' ? reqModel : plan.model && plan.model !== 'default' ? plan.model : undefined;
 
-    let reply;
-    try {
-      reply = await provider.chat({ messages, model: genModel });
-    } catch (err) {
-      this.logger.error(`Provider error: ${String(err)}`);
-      throw new ServiceUnavailableException(
-        err instanceof Error ? err.message : 'Fallo del proveedor de IA.',
-      );
-    }
+    this.logger.log(
+      `chat -> provider=${provider.name} model=${genModel ?? 'default'} task=${plan.taskType} source=${source}`,
+    );
 
-    // Persist the assistant's message with provenance metadata.
+    return {
+      conversation: { id: conversation.id, projectId: conversation.projectId },
+      entPlan: ent.plan,
+      provider,
+      source,
+      plan,
+      sources,
+      messages,
+      genModel,
+      memoriesLen: memories.length,
+    };
+  }
+
+  /** Persist reply, meter, audit, learn — and build the response payload. */
+  private async finalize(userId: string, dto: ChatDto, ctx: ChatContext, reply: FinalReply) {
+    const { conversation, entPlan, plan, sources, source } = ctx;
     const saved = await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
@@ -199,7 +266,7 @@ export class ChatService {
           model: reply.model,
           usage: reply.usage ?? {},
           latencyMs: reply.latencyMs,
-          plan: ent.plan,
+          plan: entPlan,
           source,
           taskType: plan.taskType,
           knowledgeSources: sources,
@@ -212,7 +279,6 @@ export class ChatService {
       data: { updatedAt: new Date() },
     });
 
-    // Metering: record tokens + estimated cost for this generation.
     const estimatedCost = await this.usage.log(userId, {
       provider: reply.provider,
       model: reply.model,
@@ -221,7 +287,6 @@ export class ChatService {
       outputTokens: reply.usage?.outputTokens,
     });
 
-    // Basic orchestrator audit (Answer Mode).
     await this.prisma.actionLog
       .create({
         data: {
@@ -236,7 +301,7 @@ export class ChatService {
       })
       .catch(() => undefined);
 
-    // Learn from this exchange in the background (unattended memory) — never blocks the reply.
+    // Unattended memory — never blocks the reply.
     void this.autoMemory.learn(userId, {
       user: dto.message,
       assistant: reply.content,
@@ -250,14 +315,14 @@ export class ChatService {
     return {
       conversationId: conversation.id,
       messageId: saved.id,
-      reply: { role: 'assistant', content: reply.content },
+      reply: { role: 'assistant' as const, content: reply.content },
       provider: reply.provider,
       model: reply.model,
       usage: reply.usage,
       latencyMs: reply.latencyMs,
-      plan: ent.plan,
+      plan: entPlan,
       estimatedCost,
-      memoriesUsed: memories.length,
+      memoriesUsed: ctx.memoriesLen,
       sources,
       embeddingProvider,
       orchestration: {

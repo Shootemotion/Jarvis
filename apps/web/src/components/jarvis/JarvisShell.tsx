@@ -324,7 +324,8 @@ export function JarvisShell() {
                   : 'Empezá la conversación con JARVIS.'}
               </p>
             )}
-            {messages.map((m, i) => (
+            {messages.map((m, i) =>
+              m.role === 'assistant' && !m.content ? null : (
               <div key={i} style={{ display: 'contents' }}>
                 <div
                   className={`${styles.msg} ${
@@ -358,8 +359,13 @@ export function JarvisShell() {
                   </span>
                 )}
               </div>
-            ))}
-            {sending && <div className={styles.typing}>JARVIS está pensando…</div>}
+              ),
+            )}
+            {sending &&
+              !(
+                messages[messages.length - 1]?.role === 'assistant' &&
+                messages[messages.length - 1]?.content
+              ) && <div className={styles.typing}>JARVIS está pensando…</div>}
           </div>
 
           <JarvisCommandPanel

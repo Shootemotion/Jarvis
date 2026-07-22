@@ -279,6 +279,53 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
+  /** Streaming chat via SSE. Calls onDelta per token and onMeta with the final payload. */
+  streamChat: async (
+    input: { message: string; projectId?: string; conversationId?: string },
+    cb: { onDelta: (d: string) => void; onMeta: (m: ChatReply) => void },
+  ) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(`${API_URL}/api/chat/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(input),
+    });
+    if (!res.ok || !res.body) {
+      const b = await res.json().catch(() => ({}));
+      throw new Error(b?.message ?? `Error ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() ?? '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr) continue;
+        let ev: { delta?: string; done?: boolean; meta?: ChatReply; error?: string };
+        try {
+          ev = JSON.parse(jsonStr);
+        } catch {
+          continue;
+        }
+        if (ev.error) throw new Error(ev.error);
+        if (ev.delta) cb.onDelta(ev.delta);
+        if (ev.done && ev.meta) cb.onMeta(ev.meta);
+      }
+    }
+  },
+
   listMemories: (filter?: { type?: string; projectId?: string }) => {
     const qs = new URLSearchParams();
     if (filter?.type) qs.set('type', filter.type);

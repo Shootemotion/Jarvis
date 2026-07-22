@@ -1,4 +1,4 @@
-import { AIProvider, ChatRequest, ChatResponse } from './types';
+import { AIProvider, ChatChunk, ChatRequest, ChatResponse } from './types';
 
 export interface OpenAIOptions {
   apiKey: string;
@@ -73,6 +73,52 @@ export class OpenAIProvider implements AIProvider {
       },
       latencyMs: Date.now() - start,
     };
+  }
+
+  /** Stream tokens as they arrive (OpenAI-compatible SSE). */
+  async *stream(request: ChatRequest): AsyncIterable<ChatChunk> {
+    const model = request.model ?? this.defaultModel;
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: request.messages,
+        temperature: request.temperature,
+        stream: true,
+      }),
+    });
+    if (!res.ok || !res.body) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`OpenAI ${res.status}: ${t || res.statusText}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith('data:')) continue;
+        const data = t.slice(5).trim();
+        if (data === '[DONE]') {
+          yield { delta: '', done: true };
+          return;
+        }
+        try {
+          const json = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
+          const delta = json.choices?.[0]?.delta?.content ?? '';
+          if (delta) yield { delta, done: false };
+        } catch {
+          /* ignore partial JSON */
+        }
+      }
+    }
+    yield { delta: '', done: true };
   }
 
   /**
