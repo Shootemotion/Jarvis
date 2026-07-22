@@ -136,7 +136,7 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     let mIdxBlinkL = -1, mIdxBlinkR = -1, mIdxJaw = -1, mIdxMouth = -1;
 
     // ---- background neural network ----
-    const BG = 460;
+    const BG = 560;
     const bgBase = new Float32Array(BG * 3);
     const bgSeed = new Float32Array(BG * 3);
     for (let i = 0; i < BG; i++) {
@@ -161,14 +161,14 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         d.push({ j, v: dx * dx + dy * dy + dz * dz });
       }
       d.sort((a, b) => a.v - b.v);
-      for (let n = 0; n < 3; n++) if (d[n].v < 4.2 * 4.2) bgEdgeIdx.push(i, d[n].j);
+      for (let n = 0; n < 5; n++) if (d[n].v < 5.2 * 5.2) bgEdgeIdx.push(i, d[n].j);
     }
     const bgLineGeo = new THREE.BufferGeometry();
     bgLineGeo.setAttribute('position', bgPos);
     bgLineGeo.setAttribute('color', bgCol);
     bgLineGeo.setIndex(bgEdgeIdx);
     const dot = makeDotTexture();
-    scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.08, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+    scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.17, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
     scene.add(new THREE.LineSegments(bgLineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: true })));
 
     // synapse pulses that travel from node to node along the network
@@ -182,7 +182,7 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     const pulseGeo = new THREE.BufferGeometry();
     pulseGeo.setAttribute('position', pulsePosAttr);
     pulseGeo.setAttribute('color', pulseColAttr);
-    scene.add(new THREE.Points(pulseGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.14, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
+    scene.add(new THREE.Points(pulseGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.24, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
     const pulses: { edge: number; t: number; speed: number }[] = [];
     let pulseAcc = 0;
 
@@ -293,6 +293,8 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
 
     const curColor = accent.clone();
     const tmpColor = new THREE.Color();
+    const bgTmp = new THREE.Color();
+    const hsl = { h: 0, s: 0, l: 0 };
     const bgPosArr = bgPos.array as Float32Array;
     const bgColArr = bgCol.array as Float32Array;
     let t = 0;
@@ -305,6 +307,16 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
       tmpColor.set(JARVIS_STATE_META[st].color);
       curColor.lerp(tmpColor, Math.min(1, dt * 4));
       const cr = curColor.r, cg = curColor.g, cb = curColor.b;
+
+      // Background field drifts slowly through nearby tones (independent of the
+      // head color) so it feels alive / neural.
+      curColor.getHSL(hsl);
+      bgTmp.setHSL(
+        (hsl.h + 0.12 * Math.sin(t * 0.06) + 1) % 1,
+        Math.min(1, hsl.s * 1.1 + 0.1),
+        Math.min(0.7, hsl.l + 0.08),
+      );
+      const bcr = bgTmp.r, bcg = bgTmp.g, bcb = bgTmp.b;
 
       for (const mat of headMats) { mat.color.copy(curColor); mat.opacity = 0.4 * p.dim; }
       bloom.strength += (p.bloom - bloom.strength) * Math.min(1, dt * 3);
@@ -381,8 +393,8 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         const ph = bgSeed[i * 3], fr = bgSeed[i * 3 + 1], am = bgSeed[i * 3 + 2] * p.drift;
         bgPosArr[i * 3] = bgBase[i * 3] + Math.sin(t * fr + ph) * am;
         bgPosArr[i * 3 + 1] = bgBase[i * 3 + 1] + Math.cos(t * fr * 0.9 + ph) * am;
-        const b = (0.5 + 0.5 * Math.sin(t * (fr + 0.4) + ph)) * 0.26 * p.dim;
-        bgColArr[i * 3] = cr * b; bgColArr[i * 3 + 1] = cg * b; bgColArr[i * 3 + 2] = cb * b;
+        const b = (0.5 + 0.5 * Math.sin(t * (fr + 0.4) + ph)) * 0.45 * p.dim;
+        bgColArr[i * 3] = bcr * b; bgColArr[i * 3 + 1] = bcg * b; bgColArr[i * 3 + 2] = bcb * b;
       }
       bgPos.needsUpdate = true;
       bgCol.needsUpdate = true;
@@ -411,9 +423,9 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         pulsePos[i * 3 + 1] = bgPosArr[a * 3 + 1] + (bgPosArr[b2 * 3 + 1] - bgPosArr[a * 3 + 1]) * pl.t;
         pulsePos[i * 3 + 2] = bgPosArr[a * 3 + 2] + (bgPosArr[b2 * 3 + 2] - bgPosArr[a * 3 + 2]) * pl.t;
         const fade = Math.sin(pl.t * Math.PI) * p.dim;
-        pulseCol[i * 3] = Math.min(1, cr + 0.3) * fade;
-        pulseCol[i * 3 + 1] = Math.min(1, cg + 0.3) * fade;
-        pulseCol[i * 3 + 2] = Math.min(1, cb + 0.3) * fade;
+        pulseCol[i * 3] = Math.min(1, bcr + 0.35) * fade;
+        pulseCol[i * 3 + 1] = Math.min(1, bcg + 0.35) * fade;
+        pulseCol[i * 3 + 2] = Math.min(1, bcb + 0.35) * fade;
       }
       pulsePosAttr.needsUpdate = true;
       pulseColAttr.needsUpdate = true;
