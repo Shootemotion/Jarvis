@@ -1,10 +1,21 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+let APP_VERSION = '0.0.0';
+try {
+  APP_VERSION = JSON.parse(readFileSync(resolve(here, '../../version.json'), 'utf8')).version;
+} catch {
+  /* keep default */
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Expose the build's git commit (Vercel sets VERCEL_GIT_COMMIT_SHA) so the UI
-  // can show which version is live.
+  // Single source of truth for the app version (root version.json), shown in the UI.
   env: {
-    NEXT_PUBLIC_COMMIT_SHA: (process.env.VERCEL_GIT_COMMIT_SHA ?? '').slice(0, 7),
+    NEXT_PUBLIC_APP_VERSION: APP_VERSION,
   },
   webpack: (config) => {
     // transformers.js runs in the browser/worker via onnxruntime-web (WASM).

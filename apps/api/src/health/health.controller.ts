@@ -1,7 +1,18 @@
 import { Controller, Get } from '@nestjs/common';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
 import { Public } from '../auth/public.decorator';
+
+// Single source of truth: repo-root version.json (cwd is apps/api at runtime).
+const APP_VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(resolve(process.cwd(), '../../version.json'), 'utf8')).version;
+  } catch {
+    return 'dev';
+  }
+})();
 
 @Controller('health')
 export class HealthController {
@@ -27,8 +38,7 @@ export class HealthController {
       env: this.config.env.APP_ENV,
       db,
       ollama: this.config.ollama,
-      // Render injects RENDER_GIT_COMMIT — lets the UI show the live API version.
-      version: (process.env.RENDER_GIT_COMMIT ?? 'dev').slice(0, 7),
+      version: APP_VERSION,
       timestamp: new Date().toISOString(),
     };
   }

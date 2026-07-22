@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { API_URL } from '@/lib/api';
 
-/** Tiny build indicator: web commit (Vercel) + live API commit (Render). */
+/** Tiny version indicator (SemVer): web build + live API. */
 export function VersionBadge() {
-  const web = process.env.NEXT_PUBLIC_COMMIT_SHA || 'dev';
+  const web = process.env.NEXT_PUBLIC_APP_VERSION || 'dev';
   const [apiVer, setApiVer] = useState('…');
 
   useEffect(() => {
@@ -27,7 +27,8 @@ export function VersionBadge() {
         whiteSpace: 'nowrap',
       }}
     >
-      web {web} · api {apiVer}
+      v{web}
+      {apiVer !== web && apiVer !== '…' ? ` · api v${apiVer}` : ''}
     </span>
   );
 }
