@@ -73,7 +73,14 @@ export function useVoice({ onTranscript }: Options) {
   const playingRef = useRef(false);
   const batchHooksRef = useRef<{ onStart?: () => void; onEnd?: () => void } | undefined>(undefined);
 
-  const [supported, setSupported] = useState(false);
+  // Compute support synchronously on first render to avoid header flicker
+  // (controls appearing a beat after mount).
+  const [supported, setSupported] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      (!!getSpeechRecognition() ||
+        (!!navigator.mediaDevices?.getUserMedia && typeof Worker !== 'undefined')),
+  );
   const [listening, setListening] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [modelStatus, setModelStatus] = useState<VoiceModelStatus>('idle');
