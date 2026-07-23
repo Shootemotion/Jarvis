@@ -32,6 +32,9 @@ const BG_COLOR = 0x04060a;
 // NEXT_PUBLIC_AVATAR_URL is set; otherwise the built-in facecap head.
 const AVATAR_URL = process.env.NEXT_PUBLIC_AVATAR_URL || '/facecap.glb';
 const BUST = AVATAR_URL !== '/facecap.glb';
+// Pro background: a neural-network loop video. When set, the 3D canvas is
+// transparent and the procedural field is hidden (the video is the backdrop).
+const BG_VIDEO = process.env.NEXT_PUBLIC_BG_VIDEO || '';
 
 const MP_VERSION = '0.10.35';
 const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
@@ -254,6 +257,7 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     // Container group → gentle global drift (motion without stretching branches).
     const bgGroup = new THREE.Group();
     scene.add(bgGroup);
+    bgGroup.visible = !BG_VIDEO; // hidden when a pro video backdrop is used
     bgGroup.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ vertexColors: true, size: 0.1, map: dot, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, fog: true })));
     bgGroup.add(fatLines);
 
@@ -296,8 +300,8 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     const somaColArr = somaColAttr.array as Float32Array;
 
     // ---- renderer + bloom ----
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setClearColor(BG_COLOR, 1);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: !!BG_VIDEO });
+    renderer.setClearColor(BG_COLOR, BG_VIDEO ? 0 : 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.width = '100%';
@@ -717,6 +721,17 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
 
   return (
     <>
+      {BG_VIDEO && (
+        <video
+          className={styles.bgVideo}
+          src={BG_VIDEO}
+          autoPlay
+          muted
+          loop
+          playsInline
+          aria-hidden="true"
+        />
+      )}
       <div ref={mountRef} className={styles.field} aria-hidden="true" />
       <video
         ref={videoRef}

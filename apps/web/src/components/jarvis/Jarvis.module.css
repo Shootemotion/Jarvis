@@ -25,6 +25,17 @@
   pointer-events: none;
 }
 
+/* Optional pro background video (neural loop). Sits behind the transparent 3D canvas. */
+.bgVideo {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+}
+
 /* All shell content floats above the field. */
 .header,
 .fieldCaption,

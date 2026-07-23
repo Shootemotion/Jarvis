@@ -19,6 +19,9 @@ const nextConfig = {
     // Optional Ready Player Me avatar (bust with neck/shoulders + ARKit morphs).
     // Empty → the built-in facecap head. Set to a .glb URL to use a bust.
     NEXT_PUBLIC_AVATAR_URL: process.env.NEXT_PUBLIC_AVATAR_URL ?? '',
+    // Optional pro background: a neural-network loop video (mp4/webm). When set,
+    // the 3D canvas goes transparent and the procedural field is hidden.
+    NEXT_PUBLIC_BG_VIDEO: process.env.NEXT_PUBLIC_BG_VIDEO ?? '',
   },
   webpack: (config) => {
     // transformers.js runs in the browser/worker via onnxruntime-web (WASM).
