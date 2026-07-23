@@ -160,10 +160,11 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
     // all cross-linked (nearest-neighbour web) + hub↔hub axons → everything
     // connects to everything, no loose dead-end tips.
     const hubIdx: number[] = [];
-    const HUBS = 12;
+    const HUBS = 15;
     for (let h = 0; h < HUBS; h++) {
       const hue = rand(-0.05, 0.16);
-      const hx = rand(-8.5, 8.5), hy = rand(-5, 5), hz = rand(-1.5, -9.5);
+      // Kept within the camera frustum so the web actually fills the view.
+      const hx = rand(-6.5, 6.5), hy = rand(-4.2, 4.2), hz = rand(-2, -7.5);
       const hi = addNode(hx, hy, hz, hue, true);
       hubIdx.push(hi);
       const branches = 7 + ((Math.random() * 6) | 0);
@@ -415,58 +416,9 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
         root.position.set(-center.x, -(box.max.y - span / 2), -center.z);
         scl = 2.0 / span;
       } else {
-        // facecap head + PROCEDURAL holographic bust (neck + shoulders).
-        const hw = size.x, hh = size.y, hd = size.z, chinY = box.min.y;
-        const topY = chinY + hh * 0.04;
-        const botY = chinY - hh * 1.35;
-        const prof = [
-          new THREE.Vector2(hw * 0.22, topY),
-          new THREE.Vector2(hw * 0.26, chinY - hh * 0.18),
-          new THREE.Vector2(hw * 0.34, chinY - hh * 0.34),
-          new THREE.Vector2(hw * 0.66, chinY - hh * 0.6),
-          new THREE.Vector2(hw * 0.98, chinY - hh * 0.85),
-          new THREE.Vector2(hw * 1.08, chinY - hh * 1.08),
-          new THREE.Vector2(hw * 0.9, botY),
-        ];
-        const lathe = new THREE.LatheGeometry(prof, 44);
-        const bustMat = new THREE.MeshBasicMaterial({
-          color: accent.clone(),
-          wireframe: true,
-          transparent: true,
-          opacity: 0.3,
-          depthWrite: false,
-          fog: true,
-        });
-        const fadeStart = topY - (topY - botY) * 0.5;
-        bustMat.onBeforeCompile = (sh) => {
-          sh.vertexShader =
-            'varying float vBY;\n' +
-            sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vBY = position.y;');
-          sh.fragmentShader =
-            'varying float vBY;\n' +
-            sh.fragmentShader.replace(
-              '#include <dithering_fragment>',
-              `#include <dithering_fragment>\n  gl_FragColor.a *= smoothstep(${botY.toFixed(4)}, ${fadeStart.toFixed(4)}, vBY);`,
-            );
-        };
-        headMats.push(bustMat);
-        const bust = new THREE.Mesh(lathe, bustMat);
-        bust.position.set(center.x, 0, center.z);
-        bust.scale.z = 0.6; // flatten front-back → shoulders, not a barrel
-        root.add(bust);
-
-        // Glowing eyes (fill the empty sockets).
-        const eyeGeo = new THREE.SphereGeometry(hw * 0.052, 16, 16);
-        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xbfefff, transparent: true, opacity: 0.85 });
-        for (const sx of [-1, 1]) {
-          const eye = new THREE.Mesh(eyeGeo, eyeMat);
-          eye.position.set(center.x + sx * hw * 0.16, center.y + hh * 0.05, center.z + hd * 0.32);
-          root.add(eye);
-        }
-
-        // Lift so head + bust sit centered; zoom out to fit both.
-        root.position.set(-center.x, -center.y + hh * 0.55, -center.z);
-        scl = 2.0 / (hh * 2.3);
+        // Clean head (facecap). Procedural bust reverted — looked bad blind.
+        root.position.sub(center);
+        scl = 2.0 / size.y;
       }
 
       headHolder = new THREE.Group();
