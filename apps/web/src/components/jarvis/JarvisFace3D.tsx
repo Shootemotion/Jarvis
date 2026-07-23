@@ -415,10 +415,9 @@ export function JarvisFace3D({ state, docked = false, track = false, trackMode =
 
       let scl: number;
       if (BUST) {
-        // Frame roughly the top third (head + shoulders); lower body fades out.
-        const span = size.y * 0.34;
-        root.position.set(-center.x, -(box.max.y - span / 2), -center.z);
-        scl = 2.0 / span;
+        // External model (head/bust): frame the whole thing, centered.
+        root.position.sub(center);
+        scl = 2.0 / Math.max(size.y, size.x * 0.75);
       } else {
         // Clean head (facecap). Procedural bust reverted — looked bad blind.
         root.position.sub(center);
